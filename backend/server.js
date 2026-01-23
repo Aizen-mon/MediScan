@@ -10,6 +10,9 @@ const Medicine = require("./models/Medicine");
 const ScanLog = require("./models/ScanLog");
 const { clerkAuth, authorizeRoles } = require("./middleware/clerkAuth");
 
+// Constants
+const DEFAULT_CUSTOMER_EMAIL = "CUSTOMER";
+
 const app = express();
 
 // CORS configuration - adjust origins for production
@@ -123,13 +126,22 @@ app.post("/medicine/register",
   authorizeRoles("MANUFACTURER"),
   async (req, res) => {
     try {
-      const { batchID, name, manufacturer, mfgDate, expDate } = req.body;
+      const { batchID, name, manufacturer, mfgDate, expDate, totalUnits } = req.body;
 
       // Validate required fields
-      if (!batchID || !name || !manufacturer || !mfgDate || !expDate) {
+      if (!batchID || !name || !manufacturer || !mfgDate || !expDate || !totalUnits) {
         return res.status(400).json({ 
           error: "Missing required fields",
-          required: ["batchID", "name", "manufacturer", "mfgDate", "expDate"]
+          required: ["batchID", "name", "manufacturer", "mfgDate", "expDate", "totalUnits"]
+        });
+      }
+
+      // Validate totalUnits is a positive number
+      const units = parseInt(totalUnits, 10);
+      if (isNaN(units) || units <= 0) {
+        return res.status(400).json({ 
+          error: "Invalid totalUnits",
+          message: "totalUnits must be a positive number"
         });
       }
 
@@ -142,10 +154,17 @@ app.post("/medicine/register",
         manufacturer,
         mfgDate,
         expDate,
+        totalUnits: units,
+        remainingUnits: units, // Initially, all units are remaining
         currentOwner: req.user.email,
         status: "ACTIVE",
         ownerHistory: [
-          { owner: req.user.email, role: req.user.role }
+          { 
+            owner: req.user.email, 
+            role: req.user.role,
+            action: "REGISTERED",
+            unitsPurchased: 0
+          }
         ]
       });
 
@@ -200,6 +219,72 @@ app.post("/medicine/transfer/:batchID",
       res.json({ 
         success: true,
         message: "✅ Ownership transferred", 
+        medicine: med 
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ✅ Purchase/Reduce Stock (Pharmacy/Current Owner)
+app.post("/medicine/purchase/:batchID",
+  clerkAuth,
+  authorizeRoles("PHARMACY", "DISTRIBUTOR", "MANUFACTURER"),
+  async (req, res) => {
+    try {
+      const batchID = req.params.batchID;
+      const { unitsPurchased, customerEmail } = req.body;
+
+      // Validate input
+      if (!unitsPurchased || unitsPurchased <= 0) {
+        return res.status(400).json({ 
+          error: "Invalid units",
+          message: "unitsPurchased must be a positive number"
+        });
+      }
+
+      const med = await Medicine.findOne({ batchID });
+      if (!med) return res.status(404).json({ error: "Batch not found" });
+
+      if (med.status !== "ACTIVE") {
+        return res.status(400).json({ error: "Medicine not ACTIVE" });
+      }
+
+      // ✅ Only current owner can sell/reduce stock
+      if (med.currentOwner !== req.user.email) {
+        return res.status(403).json({ error: "Only current owner can process sales" });
+      }
+
+      // Check if enough units are available
+      if (med.remainingUnits < unitsPurchased) {
+        return res.status(400).json({ 
+          error: "Insufficient stock",
+          message: `Only ${med.remainingUnits} units available`
+        });
+      }
+
+      // Reduce stock
+      med.remainingUnits -= unitsPurchased;
+      
+      // Update status if sold out
+      if (med.remainingUnits === 0) {
+        med.status = "SOLD_OUT";
+      }
+
+      // Add to owner history
+      med.ownerHistory.push({
+        owner: customerEmail || DEFAULT_CUSTOMER_EMAIL,
+        role: "CUSTOMER",
+        action: "PURCHASED",
+        unitsPurchased: unitsPurchased
+      });
+
+      await med.save();
+
+      res.json({ 
+        success: true,
+        message: `✅ ${unitsPurchased} units sold`, 
         medicine: med 
       });
     } catch (err) {

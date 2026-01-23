@@ -16,6 +16,8 @@ export interface Medicine {
   manufacturer: string;
   mfgDate: string;
   expDate: string;
+  totalUnits: number;
+  remainingUnits?: number;
   currentOwner: string;
   currentOwnerRole?: string;
   ownerHistory: { owner: string; role: string; date?: string; time?: string }[];
@@ -89,7 +91,7 @@ export function App() {
   };
 
   const handleRegisterMedicine = async (
-    medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified'>
+    medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified' | 'remainingUnits'>
   ) => {
     if (!user) return { success: false, error: 'Not authenticated' };
     if (user.role !== 'MANUFACTURER') {
@@ -109,6 +111,7 @@ export function App() {
         manufacturer: medicine.manufacturer,
         mfgDate: medicine.mfgDate,
         expDate: medicine.expDate,
+        totalUnits: medicine.totalUnits,
       });
 
       console.log('Register response:', response);
@@ -154,6 +157,34 @@ export function App() {
       return { success: false, error: response.error || 'Transfer failed' };
     } catch (error: any) {
       return { success: false, error: error.message || 'Transfer failed' };
+    }
+  };
+
+  const handlePurchase = async (batchID: string, unitsPurchased: number, customerEmail: string) => {
+    if (!user) return { success: false, error: 'Not authenticated' };
+
+    try {
+      const token = await getToken();
+      if (!token) return { success: false, error: 'Failed to get authentication token' };
+
+      const response = await medicineAPI.purchase(token, batchID, {
+        unitsPurchased,
+        customerEmail,
+      });
+
+      if (response.success) {
+        // Reload medicines to get the updated list
+        const filters = user.role !== 'CUSTOMER' ? { owner: user.email } : {};
+        const listResponse = await medicineAPI.list(token, filters);
+        if (listResponse.success && listResponse.medicines) {
+          setMedicines(listResponse.medicines);
+        }
+        return { success: true };
+      }
+
+      return { success: false, error: response.error || 'Purchase failed' };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Purchase failed' };
     }
   };
 
@@ -255,6 +286,7 @@ export function App() {
             onLogout={handleLogout}
             onRegisterMedicine={handleRegisterMedicine}
             onTransfer={handleTransfer}
+            onPurchase={handlePurchase}
             onVerify={handleVerify}
             getMedicineByBatch={getMedicineByBatch}
           />

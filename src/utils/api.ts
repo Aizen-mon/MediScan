@@ -141,6 +141,7 @@ export const medicineAPI = {
     manufacturer: string;
     mfgDate: string;
     expDate: string;
+    totalUnits: number;
   }) => {
     return fetchAPI('/medicine/register', {
       method: 'POST',
@@ -160,6 +161,20 @@ export const medicineAPI = {
       method: 'POST',
       headers: getAuthHeaders(sessionToken),
       body: JSON.stringify(transferData),
+    });
+  },
+
+  /**
+   * Purchase/Reduce stock (Pharmacy/Distributor only)
+   */
+  purchase: async (sessionToken: string, batchID: string, purchaseData: {
+    unitsPurchased: number;
+    customerEmail?: string;
+  }) => {
+    return fetchAPI(`/medicine/purchase/${batchID}`, {
+      method: 'POST',
+      headers: getAuthHeaders(sessionToken),
+      body: JSON.stringify(purchaseData),
     });
   },
 

@@ -10,6 +10,7 @@ import {
   Calendar,
   User,
   ArrowRight,
+  Box,
 } from 'lucide-react';
 import type { Medicine } from '../App';
 
@@ -149,6 +150,17 @@ export function VerifyMedicine({ onVerify }: VerifyMedicineProps) {
                       <p className="font-semibold text-gray-900">{result.medicine.expDate}</p>
                     </div>
                   </div>
+                  {result.medicine.totalUnits !== undefined && (
+                    <div className="flex items-start gap-3 p-4 bg-white rounded-xl shadow-sm">
+                      <Box className="w-5 h-5 text-gray-400 mt-0.5" />
+                      <div>
+                        <p className="text-xs text-gray-500 uppercase tracking-wide">Stock Status</p>
+                        <p className="font-semibold text-gray-900">
+                          {result.medicine.remainingUnits ?? result.medicine.totalUnits} / {result.medicine.totalUnits} units
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Ownership History */}
