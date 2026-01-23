@@ -28,8 +28,9 @@
       <input id="batchID" placeholder="Batch ID"><br><br>
       <input id="medName" placeholder="Medicine Name"><br><br>
       <input id="manufacturer" placeholder="Manufacturer"><br><br>
-      <input id="mfgDate" placeholder="MFG Date"><br><br>
-      <input id="expDate" placeholder="EXP Date"><br><br>
+      <input id="mfgDate" placeholder="MFG Date (YYYY-MM-DD)"><br><br>
+      <input id="expDate" placeholder="EXP Date (YYYY-MM-DD)"><br><br>
+      <input id="totalUnits" placeholder="Total Units in Batch"><br><br>
       <button onclick="registerMedicine()">Register</button>
       <p id="regMsg"></p>
       <hr>
@@ -40,9 +41,19 @@
       <h3>Transfer Ownership</h3>
       <input id="transferBatch" placeholder="Batch ID"><br><br>
       <input id="newOwnerEmail" placeholder="New Owner Email"><br><br>
-      <input id="newOwnerRole" placeholder="New Owner Role (PHARMACY/DISTRIBUTOR/CUSTOMER)"><br><br>
+      <input id="newOwnerRole" placeholder="New Owner Role (DISTRIBUTOR/PHARMACY/CUSTOMER)"><br><br>
       <button onclick="transferOwnership()">Transfer</button>
       <p id="transferMsg"></p>
+      <hr>
+    </div>
+
+    <!-- Customer Purchase -->
+    <div id="purchaseBox" style="display:none;">
+      <h3>Customer Purchase</h3>
+      <input id="purchaseBatch" placeholder="Batch ID"><br><br>
+      <input id="purchaseUnits" placeholder="Units to Buy (default 1)"><br><br>
+      <button onclick="purchaseMedicine()">Purchase</button>
+      <p id="purchaseMsg"></p>
       <hr>
     </div>
 
@@ -66,8 +77,9 @@
   </div>
 
 <script>
-  const API = "http://localhost:5000"; // change to Render URL if hosted
+  const API = "http://localhost:5000"; // change to hosted URL if needed
   let token = "";
+  let role = "";
 
   async function login(){
     const res = await fetch(`${API}/auth/login`,{
@@ -79,6 +91,8 @@
     const data = await res.json();
     if(data.token){
       token = data.token;
+      role = data.role;
+
       loginBox.style.display="none";
       dashboard.style.display="block";
 
@@ -89,6 +103,12 @@
       if(data.role === "MANUFACTURER"){
         registerBox.style.display="block";
       }
+
+      // show purchase only for customer
+      if(data.role === "CUSTOMER"){
+        purchaseBox.style.display="block";
+      }
+
     }else{
       loginMsg.innerText = data.error;
     }
@@ -96,7 +116,10 @@
 
   function logout(){
     token="";
+    role="";
     dashboard.style.display="none";
+    registerBox.style.display="none";
+    purchaseBox.style.display="none";
     loginBox.style.display="block";
   }
 
@@ -112,7 +135,8 @@
         name: medName.value,
         manufacturer: manufacturer.value,
         mfgDate: mfgDate.value,
-        expDate: expDate.value
+        expDate: expDate.value,
+        totalUnits: totalUnits.value
       })
     });
 
@@ -137,6 +161,24 @@
     transferMsg.innerText = data.message || data.error;
   }
 
+  async function purchaseMedicine(){
+    const units = purchaseUnits.value || 1;
+
+    const res = await fetch(`${API}/medicine/purchase/${purchaseBatch.value}`,{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "Authorization":`Bearer ${token}`
+      },
+      body: JSON.stringify({
+        unitsToBuy: units
+      })
+    });
+
+    const data = await res.json();
+    purchaseMsg.innerText = data.message || data.error;
+  }
+
   async function generateQR(){
     const res = await fetch(`${API}/medicine/qrcode/${qrBatch.value}`,{
       headers:{ "Authorization":`Bearer ${token}` }
@@ -151,11 +193,11 @@
   }
 
   async function verify(){
-    // this is manual verify (simulating scan)
     const resQR = await fetch(`${API}/medicine/qrcode/${verifyBatch.value}`,{
       headers:{ "Authorization":`Bearer ${token}` }
     });
     const qrData = await resQR.json();
+
     if(!qrData.qrURL){
       verifyResult.innerText = "❌ Invalid batch";
       return;

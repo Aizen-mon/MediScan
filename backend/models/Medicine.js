@@ -7,13 +7,21 @@ const MedicineSchema = new mongoose.Schema({
   mfgDate: String,
   expDate: String,
 
+  // ✅ Units stock per batch
+  totalUnits: { type: Number, required: true },
+  remainingUnits: { type: Number, required: true },
+
   currentOwner: String,
-  status: { type: String, default: "ACTIVE" }, // ACTIVE / BLOCKED / SOLD
+
+  // ACTIVE / BLOCKED / SOLD_OUT
+  status: { type: String, default: "ACTIVE" },
 
   ownerHistory: [
     {
       owner: String,
       role: String,
+      action: String, // REGISTERED / TRANSFERRED / PURCHASED
+      unitsPurchased: { type: Number, default: 0 },
       time: { type: Date, default: Date.now }
     }
   ],
