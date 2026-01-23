@@ -12,10 +12,10 @@ async function clerkAuth(req, res, next) {
       return res.status(401).json({ error: "No session token provided" });
     }
 
-    // Verify the session token with Clerk
-    let session;
+    // Verify the session token with Clerk using verifyToken
+    let verifiedToken;
     try {
-      session = await clerkClient.sessions.verifySession(sessionToken);
+      verifiedToken = await clerkClient.verifyToken(sessionToken);
     } catch (verifyError) {
       // Provide more specific error messages
       if (verifyError.message?.includes('expired')) {
@@ -27,17 +27,33 @@ async function clerkAuth(req, res, next) {
       throw verifyError; // Re-throw unknown errors
     }
     
-    if (!session) {
+    if (!verifiedToken || !verifiedToken.sub) {
       return res.status(401).json({ error: "Invalid session token" });
     }
 
     // Get user details from Clerk
-    const user = await clerkClient.users.getUser(session.userId);
+    const user = await clerkClient.users.getUser(verifiedToken.sub);
+    
+    // Safely determine the user's primary email address
+    const primaryEmail =
+      (Array.isArray(user.emailAddresses) &&
+        user.emailAddresses.length > 0 &&
+        user.emailAddresses[0] &&
+        user.emailAddresses[0].emailAddress) ||
+      (user.primaryEmailAddress && user.primaryEmailAddress.emailAddress) ||
+      null;
+
+    if (!primaryEmail) {
+      return res.status(400).json({
+        error: "User email not found",
+        message: "No email address is associated with this account",
+      });
+    }
     
     // Attach user info to request
     req.user = {
       id: user.id,
-      email: user.emailAddresses[0]?.emailAddress,
+      email: primaryEmail,
       name: user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.firstName || user.username || 'User',
       role: user.publicMetadata?.role || "CUSTOMER" // Role stored in Clerk user metadata
     };

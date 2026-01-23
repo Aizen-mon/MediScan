@@ -22,6 +22,7 @@ import { MedicineList } from './MedicineList';
 interface DashboardProps {
   user: UserType;
   medicines: Medicine[];
+  isLoadingMedicines?: boolean;
   onLogout: () => void;
   onRegisterMedicine: (
     medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified'>
@@ -44,6 +45,7 @@ const roleColors: Record<string, string> = {
 export function Dashboard({
   user,
   medicines,
+  isLoadingMedicines,
   onLogout,
   onRegisterMedicine,
   onTransfer,
@@ -186,7 +188,7 @@ export function Dashboard({
         {/* Tab Content */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           {activeTab === 'overview' && (
-            <MedicineList medicines={medicines} userRole={user.role} />
+            <MedicineList medicines={medicines} userRole={user.role} isLoading={isLoadingMedicines} />
           )}
           {activeTab === 'register' && user.role === 'MANUFACTURER' && (
             <RegisterMedicine onRegister={onRegisterMedicine} />

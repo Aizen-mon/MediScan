@@ -21,26 +21,54 @@ async function fetchAPI<T = any>(
 ): Promise<T> {
   const url = `${API_URL}${endpoint}`;
   
+  let response: Response;
   try {
-    const response = await fetch(url, {
+    response = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
       },
     });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || data.message || `HTTP ${response.status}`);
-    }
-
-    return data;
   } catch (error) {
-    console.error(`API Error [${endpoint}]:`, error);
+    console.error(`Network error while calling API [${endpoint}]:`, error);
+    const message =
+      error instanceof Error
+        ? `Network error: ${error.message}`
+        : `Network error while calling ${endpoint}`;
+    throw new Error(message);
+  }
+
+  let data: any;
+  try {
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      // Non-JSON response
+      const text = await response.text();
+      console.error(
+        `Expected JSON response from API [${endpoint}], but received:`,
+        text.substring(0, 200)
+      );
+      throw new Error(`Invalid (non-JSON) response from server`);
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      console.error(`Failed to parse JSON response from API [${endpoint}]:`, error);
+      throw new Error(`Invalid JSON response from server`);
+    }
+    // Re-throw other errors (e.g., the explicit non-JSON error above)
     throw error;
   }
+
+  if (!response.ok) {
+    const message =
+      (data && (data.error || data.message)) || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+
+  return data as T;
 }
 
 /**

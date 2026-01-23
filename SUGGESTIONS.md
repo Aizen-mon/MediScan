@@ -9,7 +9,7 @@ This document outlines suggested improvements and future enhancements for the Me
 #### Input Validation & Sanitization
 - [ ] Add comprehensive input validation using libraries like `joi` or `zod`
 - [ ] Sanitize all user inputs to prevent injection attacks
-- [ ] Add rate limiting to prevent API abuse using `express-rate-limit`
+- [x] Add rate limiting to prevent API abuse using `express-rate-limit`
 - [ ] Implement CSRF protection for state-changing operations
 
 **Example Implementation:**

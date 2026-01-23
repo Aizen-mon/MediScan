@@ -34,9 +34,17 @@ export function App() {
   useEffect(() => {
     if (isLoaded && clerkUser) {
       const role = (clerkUser.publicMetadata?.role as string) || 'CUSTOMER';
+      const primaryEmail = clerkUser.primaryEmailAddress?.emailAddress;
+      
+      // Validate that user has a valid email address
+      if (!primaryEmail) {
+        console.error('User does not have a valid email address');
+        return;
+      }
+      
       setUser({
         name: clerkUser.fullName || clerkUser.firstName || 'User',
-        email: clerkUser.primaryEmailAddress?.emailAddress || '',
+        email: primaryEmail,
         role: role as User['role'],
         token: '', // Will be set when needed
       });
@@ -56,8 +64,9 @@ export function App() {
         const token = await getToken();
         if (!token) return;
 
-        // For non-customers, only load medicines they own
-        // For customers, load all medicines
+        // Load medicines based on user role
+        // Non-customers (manufacturers, distributors, pharmacies) see only their own medicines
+        // Customers can verify any medicine but don't load all by default
         const filters = user.role !== 'CUSTOMER' ? { owner: user.email } : {};
         const response = await medicineAPI.list(token, filters);
         
@@ -146,13 +155,29 @@ export function App() {
     batchID: string
   ): Promise<{ verified: boolean; medicine?: Medicine; error?: string }> => {
     try {
-      // For public verification, we would need the signature
-      // For now, just check if medicine exists in our list
-      const medicine = medicines.find((m) => m.batchID === batchID);
-      if (!medicine) {
-        return { verified: false, error: 'Medicine not found in registry' };
+      // First check if medicine exists in our local list
+      const localMedicine = medicines.find((m) => m.batchID === batchID);
+      if (localMedicine) {
+        return { verified: true, medicine: localMedicine };
       }
-      return { verified: true, medicine };
+      
+      // If not found locally and user is authenticated, try to fetch from backend
+      if (user) {
+        try {
+          const token = await getToken();
+          if (token) {
+            const response = await medicineAPI.list(token, { batchID });
+            if (response.success && response.medicines && response.medicines.length > 0) {
+              return { verified: true, medicine: response.medicines[0] };
+            }
+          }
+        } catch (error: any) {
+          console.error('Backend verification failed:', error);
+          // Fall through to not found error
+        }
+      }
+      
+      return { verified: false, error: 'Medicine not found in registry' };
     } catch (error: any) {
       return { verified: false, error: error.message || 'Verification failed' };
     }
@@ -220,6 +245,7 @@ export function App() {
           <Dashboard
             user={user}
             medicines={medicines}
+            isLoadingMedicines={isLoadingMedicines}
             onLogout={handleLogout}
             onRegisterMedicine={handleRegisterMedicine}
             onTransfer={handleTransfer}

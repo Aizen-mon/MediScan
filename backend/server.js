@@ -27,7 +27,7 @@ app.use(cors({
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(null, false);
     }
   },
   credentials: true
@@ -288,7 +288,7 @@ app.get("/medicine/qrcode/:batchID", clerkAuth, async (req, res) => {
     if (!med) return res.status(404).json({ error: "Batch not found" });
 
     const sig = signBatch(batchID);
-    const baseURL = process.env.FRONTEND_URL || `http://localhost:${process.env.PORT}`;
+    const baseURL = process.env.BACKEND_URL || `http://localhost:${process.env.PORT}`;
     const qrURL = `${baseURL}/medicine/verify/${batchID}?sig=${sig}`;
 
     const qr = await QRCode.toDataURL(qrURL);
