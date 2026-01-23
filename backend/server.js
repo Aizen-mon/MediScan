@@ -4,7 +4,6 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const QRCode = require("qrcode");
 const crypto = require("crypto");
-const rateLimit = require("express-rate-limit");
 const { clerkClient } = require("@clerk/clerk-sdk-node");
 
 const Medicine = require("./models/Medicine");
@@ -14,54 +13,12 @@ const { clerkAuth, authorizeRoles } = require("./middleware/clerkAuth");
 const app = express();
 
 // CORS configuration - adjust origins for production
-const allowedOrigins = [
-  process.env.FRONTEND_URL || "http://localhost:5173",
-  "http://localhost:5173", // Default development
-];
-
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(null, false);
-    }
-  },
+  origin: process.env.FRONTEND_URL || "http://localhost:5173",
   credentials: true
 }));
 
 app.use(express.json());
-
-// Rate limiting configuration
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  message: { error: "Too many requests, please try again later." },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 50, // More restrictive for auth endpoints
-  message: { error: "Too many authentication attempts, please try again later." },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-const strictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // Very restrictive for sensitive operations
-  message: { error: "Too many requests for this operation, please try again later." },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// Apply general rate limiting to all routes
-app.use(generalLimiter);
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGO_URL)
@@ -94,7 +51,7 @@ function signBatch(batchID) {
 ====================================== */
 
 // Get current user profile from Clerk
-app.get("/auth/profile", authLimiter, clerkAuth, async (req, res) => {
+app.get("/auth/profile", clerkAuth, async (req, res) => {
   try {
     res.json({ 
       success: true,
@@ -111,7 +68,7 @@ app.get("/auth/profile", authLimiter, clerkAuth, async (req, res) => {
 });
 
 // Update user role (requires Clerk Dashboard or Admin API)
-app.put("/auth/role", strictLimiter, clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+app.put("/auth/role", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
   try {
     const { userId, role } = req.body;
     
@@ -162,7 +119,6 @@ app.get("/medicine/list", clerkAuth, async (req, res) => {
 
 // ✅ Register Medicine (ONLY Manufacturer)
 app.post("/medicine/register",
-  authLimiter,
   clerkAuth,
   authorizeRoles("MANUFACTURER"),
   async (req, res) => {
@@ -206,7 +162,6 @@ app.post("/medicine/register",
 
 // ✅ Transfer Ownership (Manufacturer/Distributor/Pharmacy)
 app.post("/medicine/transfer/:batchID",
-  authLimiter,
   clerkAuth,
   authorizeRoles("MANUFACTURER", "DISTRIBUTOR", "PHARMACY"),
   async (req, res) => {
@@ -255,7 +210,6 @@ app.post("/medicine/transfer/:batchID",
 
 // ✅ Block Medicine (Admin)
 app.post("/medicine/block/:batchID",
-  strictLimiter,
   clerkAuth,
   authorizeRoles("ADMIN"),
   async (req, res) => {
@@ -288,7 +242,7 @@ app.get("/medicine/qrcode/:batchID", clerkAuth, async (req, res) => {
     if (!med) return res.status(404).json({ error: "Batch not found" });
 
     const sig = signBatch(batchID);
-    const baseURL = process.env.BACKEND_URL || `http://localhost:${process.env.PORT}`;
+    const baseURL = process.env.FRONTEND_URL || `http://localhost:${process.env.PORT}`;
     const qrURL = `${baseURL}/medicine/verify/${batchID}?sig=${sig}`;
 
     const qr = await QRCode.toDataURL(qrURL);
@@ -371,7 +325,7 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
 });
 
 // ✅ Get Scan Logs (Admin)
-app.get("/logs", strictLimiter, clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+app.get("/logs", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
   try {
     const logs = await ScanLog.find().sort({ time: -1 });
     res.json({ 
