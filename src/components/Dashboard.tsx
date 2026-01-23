@@ -11,6 +11,7 @@ import {
   Menu,
   X,
   Pill,
+  ShoppingCart,
 } from 'lucide-react';
 import type { User as UserType, Medicine } from '../App';
 import { RegisterMedicine } from './RegisterMedicine';
@@ -18,6 +19,7 @@ import { TransferOwnership } from './TransferOwnership';
 import { GenerateQR } from './GenerateQR';
 import { VerifyMedicine } from './VerifyMedicine';
 import { MedicineList } from './MedicineList';
+import { PurchaseMedicine } from './PurchaseMedicine';
 
 interface DashboardProps {
   user: UserType;
@@ -28,11 +30,12 @@ interface DashboardProps {
     medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified'>
   ) => { success: boolean; error?: string };
   onTransfer: (batchID: string, newOwnerEmail: string, newOwnerRole: string) => { success: boolean; error?: string };
+  onPurchase: (batchID: string, unitsPurchased: number, customerEmail: string) => Promise<{ success: boolean; error?: string }>;
   onVerify: (batchID: string) => { verified: boolean; medicine?: Medicine; error?: string };
   getMedicineByBatch: (batchID: string) => Medicine | undefined;
 }
 
-type Tab = 'overview' | 'register' | 'transfer' | 'qrcode' | 'verify';
+type Tab = 'overview' | 'register' | 'transfer' | 'purchase' | 'qrcode' | 'verify';
 
 const roleColors: Record<string, string> = {
   MANUFACTURER: 'bg-purple-100 text-purple-700',
@@ -49,6 +52,7 @@ export function Dashboard({
   onLogout,
   onRegisterMedicine,
   onTransfer,
+  onPurchase,
   onVerify,
   getMedicineByBatch,
 }: DashboardProps) {
@@ -65,6 +69,7 @@ export function Dashboard({
     { id: 'overview' as Tab, label: 'Overview', icon: Package, show: true },
     { id: 'register' as Tab, label: 'Register Medicine', icon: Pill, show: user.role === 'MANUFACTURER' },
     { id: 'transfer' as Tab, label: 'Transfer', icon: ArrowRightLeft, show: user.role !== 'CUSTOMER' },
+    { id: 'purchase' as Tab, label: 'Process Sale', icon: ShoppingCart, show: user.role === 'PHARMACY' || user.role === 'DISTRIBUTOR' },
     { id: 'qrcode' as Tab, label: 'QR Code', icon: QrCode, show: true },
     { id: 'verify' as Tab, label: 'Verify', icon: CheckCircle2, show: true },
   ].filter((tab) => tab.show);
@@ -197,6 +202,12 @@ export function Dashboard({
             <TransferOwnership
               medicines={medicines.filter((m) => m.currentOwner === user.email)}
               onTransfer={onTransfer}
+            />
+          )}
+          {activeTab === 'purchase' && (user.role === 'PHARMACY' || user.role === 'DISTRIBUTOR') && (
+            <PurchaseMedicine
+              medicines={medicines.filter((m) => m.currentOwner === user.email)}
+              onPurchase={onPurchase}
             />
           )}
           {activeTab === 'qrcode' && (

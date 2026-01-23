@@ -1,0 +1,202 @@
+import { useState } from 'react';
+import { ShoppingCart, Package, User, CheckCircle2, AlertCircle, Box } from 'lucide-react';
+import type { Medicine } from '../App';
+
+interface PurchaseMedicineProps {
+  medicines: Medicine[];
+  onPurchase: (batchID: string, unitsPurchased: number, customerEmail: string) => Promise<{ success: boolean; error?: string }>;
+}
+
+export function PurchaseMedicine({ medicines, onPurchase }: PurchaseMedicineProps) {
+  const [selectedBatch, setSelectedBatch] = useState('');
+  const [unitsPurchased, setUnitsPurchased] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const selectedMedicine = medicines.find((m) => m.batchID === selectedBatch);
+  const availableStock = selectedMedicine?.remainingUnits ?? 0;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setMessage(null);
+
+    const units = parseInt(unitsPurchased, 10);
+
+    if (!selectedBatch) {
+      setMessage({ type: 'error', text: 'Please select a medicine batch' });
+      setIsLoading(false);
+      return;
+    }
+
+    if (isNaN(units) || units <= 0) {
+      setMessage({ type: 'error', text: 'Please enter a valid number of units' });
+      setIsLoading(false);
+      return;
+    }
+
+    if (units > availableStock) {
+      setMessage({ type: 'error', text: `Only ${availableStock} units available` });
+      setIsLoading(false);
+      return;
+    }
+
+    const result = await onPurchase(selectedBatch, units, customerEmail.trim() || 'CUSTOMER');
+
+    if (result.success) {
+      setMessage({ type: 'success', text: `Successfully sold ${units} units!` });
+      setUnitsPurchased('');
+      setCustomerEmail('');
+      setSelectedBatch('');
+    } else {
+      setMessage({ type: 'error', text: result.error || 'Purchase failed' });
+    }
+    
+    setIsLoading(false);
+  };
+
+  const getStockStatus = (remaining: number, total: number) => {
+    const percentage = (remaining / total) * 100;
+    if (remaining === 0) {
+      return { label: 'Out of Stock', color: 'text-red-600', bgColor: 'bg-red-100' };
+    } else if (percentage < 20) {
+      return { label: 'Low Stock', color: 'text-amber-600', bgColor: 'bg-amber-100' };
+    } else {
+      return { label: 'In Stock', color: 'text-green-600', bgColor: 'bg-green-100' };
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-6">
+        <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+          <ShoppingCart className="w-6 h-6 text-blue-500" />
+          Process Sale / Reduce Stock
+        </h2>
+        <p className="text-gray-500 mt-1">Sell medicine units to customers and update inventory</p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="max-w-2xl space-y-5">
+        {message && (
+          <div
+            className={`flex items-center gap-2 p-4 rounded-xl ${
+              message.type === 'success'
+                ? 'bg-green-50 border border-green-100 text-green-700'
+                : 'bg-red-50 border border-red-100 text-red-700'
+            }`}
+          >
+            {message.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+            ) : (
+              <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            )}
+            {message.text}
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-700">Select Medicine Batch</label>
+          <div className="relative">
+            <Package className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+            <select
+              value={selectedBatch}
+              onChange={(e) => setSelectedBatch(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all appearance-none"
+              required
+            >
+              <option value="">-- Select a batch --</option>
+              {medicines
+                .filter((m) => m.status === 'ACTIVE' && (m.remainingUnits ?? 0) > 0)
+                .map((medicine) => (
+                  <option key={medicine.batchID} value={medicine.batchID}>
+                    {medicine.batchID} - {medicine.name} ({medicine.remainingUnits ?? 0} units available)
+                  </option>
+                ))}
+            </select>
+          </div>
+        </div>
+
+        {selectedMedicine && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-blue-600 font-medium">Medicine:</p>
+                <p className="text-gray-900">{selectedMedicine.name}</p>
+              </div>
+              <div>
+                <p className="text-blue-600 font-medium">Manufacturer:</p>
+                <p className="text-gray-900">{selectedMedicine.manufacturer}</p>
+              </div>
+              <div>
+                <p className="text-blue-600 font-medium">Available Stock:</p>
+                <p className="text-gray-900 flex items-center gap-2">
+                  <Box className="w-4 h-4" />
+                  {availableStock} / {selectedMedicine.totalUnits} units
+                  <span className={`text-xs px-2 py-0.5 rounded ${getStockStatus(availableStock, selectedMedicine.totalUnits).bgColor} ${getStockStatus(availableStock, selectedMedicine.totalUnits).color}`}>
+                    {getStockStatus(availableStock, selectedMedicine.totalUnits).label}
+                  </span>
+                </p>
+              </div>
+              <div>
+                <p className="text-blue-600 font-medium">Expiry Date:</p>
+                <p className="text-gray-900">{selectedMedicine.expDate}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-700">Units to Sell</label>
+          <div className="relative">
+            <Box className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              type="number"
+              value={unitsPurchased}
+              onChange={(e) => setUnitsPurchased(e.target.value)}
+              placeholder="Enter number of units"
+              min="1"
+              max={availableStock}
+              className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              required
+              disabled={!selectedBatch}
+            />
+          </div>
+          {selectedBatch && availableStock > 0 && (
+            <p className="text-xs text-gray-500">Maximum: {availableStock} units</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-700">Customer Email (Optional)</label>
+          <div className="relative">
+            <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              type="email"
+              value={customerEmail}
+              onChange={(e) => setCustomerEmail(e.target.value)}
+              placeholder="customer@example.com (optional)"
+              className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+            />
+          </div>
+          <p className="text-xs text-gray-500">Leave blank to record as generic CUSTOMER purchase</p>
+        </div>
+
+        <button
+          type="submit"
+          disabled={isLoading || !selectedBatch}
+          className="w-full py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold rounded-xl shadow-lg shadow-blue-200 hover:shadow-xl hover:shadow-blue-300 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          {isLoading ? (
+            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          ) : (
+            <>
+              <ShoppingCart className="w-5 h-5" />
+              Process Sale
+            </>
+          )}
+        </button>
+      </form>
+    </div>
+  );
+}

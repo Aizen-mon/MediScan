@@ -165,6 +165,20 @@ export const medicineAPI = {
   },
 
   /**
+   * Purchase/Reduce stock (Pharmacy/Distributor only)
+   */
+  purchase: async (sessionToken: string, batchID: string, purchaseData: {
+    unitsPurchased: number;
+    customerEmail?: string;
+  }) => {
+    return fetchAPI(`/medicine/purchase/${batchID}`, {
+      method: 'POST',
+      headers: getAuthHeaders(sessionToken),
+      body: JSON.stringify(purchaseData),
+    });
+  },
+
+  /**
    * Block a medicine (Admin only)
    */
   block: async (sessionToken: string, batchID: string) => {

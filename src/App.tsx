@@ -160,6 +160,34 @@ export function App() {
     }
   };
 
+  const handlePurchase = async (batchID: string, unitsPurchased: number, customerEmail: string) => {
+    if (!user) return { success: false, error: 'Not authenticated' };
+
+    try {
+      const token = await getToken();
+      if (!token) return { success: false, error: 'Failed to get authentication token' };
+
+      const response = await medicineAPI.purchase(token, batchID, {
+        unitsPurchased,
+        customerEmail,
+      });
+
+      if (response.success) {
+        // Reload medicines to get the updated list
+        const filters = user.role !== 'CUSTOMER' ? { owner: user.email } : {};
+        const listResponse = await medicineAPI.list(token, filters);
+        if (listResponse.success && listResponse.medicines) {
+          setMedicines(listResponse.medicines);
+        }
+        return { success: true };
+      }
+
+      return { success: false, error: response.error || 'Purchase failed' };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Purchase failed' };
+    }
+  };
+
   const handleVerify = async (
     batchID: string
   ): Promise<{ verified: boolean; medicine?: Medicine; error?: string }> => {
@@ -258,6 +286,7 @@ export function App() {
             onLogout={handleLogout}
             onRegisterMedicine={handleRegisterMedicine}
             onTransfer={handleTransfer}
+            onPurchase={handlePurchase}
             onVerify={handleVerify}
             getMedicineByBatch={getMedicineByBatch}
           />

@@ -224,6 +224,72 @@ app.post("/medicine/transfer/:batchID",
   }
 );
 
+// ✅ Purchase/Reduce Stock (Pharmacy/Current Owner)
+app.post("/medicine/purchase/:batchID",
+  clerkAuth,
+  authorizeRoles("PHARMACY", "DISTRIBUTOR", "MANUFACTURER"),
+  async (req, res) => {
+    try {
+      const batchID = req.params.batchID;
+      const { unitsPurchased, customerEmail } = req.body;
+
+      // Validate input
+      if (!unitsPurchased || unitsPurchased <= 0) {
+        return res.status(400).json({ 
+          error: "Invalid units",
+          message: "unitsPurchased must be a positive number"
+        });
+      }
+
+      const med = await Medicine.findOne({ batchID });
+      if (!med) return res.status(404).json({ error: "Batch not found" });
+
+      if (med.status !== "ACTIVE") {
+        return res.status(400).json({ error: "Medicine not ACTIVE" });
+      }
+
+      // ✅ Only current owner can sell/reduce stock
+      if (med.currentOwner !== req.user.email) {
+        return res.status(403).json({ error: "Only current owner can process sales" });
+      }
+
+      // Check if enough units are available
+      if (med.remainingUnits < unitsPurchased) {
+        return res.status(400).json({ 
+          error: "Insufficient stock",
+          message: `Only ${med.remainingUnits} units available`
+        });
+      }
+
+      // Reduce stock
+      med.remainingUnits -= unitsPurchased;
+      
+      // Update status if sold out
+      if (med.remainingUnits === 0) {
+        med.status = "SOLD_OUT";
+      }
+
+      // Add to owner history
+      med.ownerHistory.push({
+        owner: customerEmail || "CUSTOMER",
+        role: "CUSTOMER",
+        action: "PURCHASED",
+        unitsPurchased: unitsPurchased
+      });
+
+      await med.save();
+
+      res.json({ 
+        success: true,
+        message: `✅ ${unitsPurchased} units sold`, 
+        medicine: med 
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
 // ✅ Block Medicine (Admin)
 app.post("/medicine/block/:batchID",
   clerkAuth,
