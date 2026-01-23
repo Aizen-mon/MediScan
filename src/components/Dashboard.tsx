@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useClerk } from '@clerk/clerk-react';
 import {
   Shield,
   LogOut,
@@ -32,11 +33,12 @@ interface DashboardProps {
 
 type Tab = 'overview' | 'register' | 'transfer' | 'qrcode' | 'verify';
 
-const roleColors = {
+const roleColors: Record<string, string> = {
   MANUFACTURER: 'bg-purple-100 text-purple-700',
   DISTRIBUTOR: 'bg-blue-100 text-blue-700',
   PHARMACY: 'bg-green-100 text-green-700',
   CUSTOMER: 'bg-orange-100 text-orange-700',
+  ADMIN: 'bg-red-100 text-red-700',
 };
 
 export function Dashboard({
@@ -48,8 +50,14 @@ export function Dashboard({
   onVerify,
   getMedicineByBatch,
 }: DashboardProps) {
+  const { signOut } = useClerk();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleLogout = async () => {
+    await signOut();
+    onLogout();
+  };
 
   const tabs = [
     { id: 'overview' as Tab, label: 'Overview', icon: Package, show: true },
@@ -105,7 +113,7 @@ export function Dashboard({
                 </div>
               </div>
               <button
-                onClick={onLogout}
+                onClick={handleLogout}
                 className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
                 title="Logout"
               >
