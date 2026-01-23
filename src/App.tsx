@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { LoginPage } from './components/LoginPage';
+import { useEffect, useState } from 'react';
+import { useUser, useAuth, SignIn, SignedIn, SignedOut } from '@clerk/clerk-react';
 import { Dashboard } from './components/Dashboard';
+import { medicineAPI } from './utils/api';
 
 export interface User {
   name: string;
   email: string;
-  role: 'MANUFACTURER' | 'DISTRIBUTOR' | 'PHARMACY' | 'CUSTOMER';
+  role: 'MANUFACTURER' | 'DISTRIBUTOR' | 'PHARMACY' | 'CUSTOMER' | 'ADMIN';
   token: string;
 }
 
@@ -16,144 +17,243 @@ export interface Medicine {
   mfgDate: string;
   expDate: string;
   currentOwner: string;
-  currentOwnerRole: string;
-  ownerHistory: { owner: string; role: string; date: string }[];
-  verified: boolean;
+  currentOwnerRole?: string;
+  ownerHistory: { owner: string; role: string; date?: string; time?: string }[];
+  verified?: boolean;
+  status?: string;
 }
 
-// Mock data for demo purposes
-const mockUsers = [
-  { email: 'manufacturer@pharma.com', password: 'demo123', name: 'PharmaCorp Inc.', role: 'MANUFACTURER' as const },
-  { email: 'distributor@pharma.com', password: 'demo123', name: 'MedDistro Ltd.', role: 'DISTRIBUTOR' as const },
-  { email: 'pharmacy@pharma.com', password: 'demo123', name: 'HealthPlus Pharmacy', role: 'PHARMACY' as const },
-  { email: 'customer@pharma.com', password: 'demo123', name: 'John Doe', role: 'CUSTOMER' as const },
-];
-
-const initialMedicines: Medicine[] = [
-  {
-    batchID: 'BATCH-001',
-    name: 'Paracetamol 500mg',
-    manufacturer: 'PharmaCorp Inc.',
-    mfgDate: '2024-01-15',
-    expDate: '2026-01-15',
-    currentOwner: 'manufacturer@pharma.com',
-    currentOwnerRole: 'MANUFACTURER',
-    ownerHistory: [{ owner: 'PharmaCorp Inc.', role: 'MANUFACTURER', date: '2024-01-15' }],
-    verified: true,
-  },
-  {
-    batchID: 'BATCH-002',
-    name: 'Amoxicillin 250mg',
-    manufacturer: 'PharmaCorp Inc.',
-    mfgDate: '2024-02-20',
-    expDate: '2025-08-20',
-    currentOwner: 'distributor@pharma.com',
-    currentOwnerRole: 'DISTRIBUTOR',
-    ownerHistory: [
-      { owner: 'PharmaCorp Inc.', role: 'MANUFACTURER', date: '2024-02-20' },
-      { owner: 'MedDistro Ltd.', role: 'DISTRIBUTOR', date: '2024-03-01' },
-    ],
-    verified: true,
-  },
-];
-
 export function App() {
+  const { user: clerkUser, isLoaded } = useUser();
+  const { getToken } = useAuth();
   const [user, setUser] = useState<User | null>(null);
-  const [medicines, setMedicines] = useState<Medicine[]>(initialMedicines);
+  const [medicines, setMedicines] = useState<Medicine[]>([]);
+  const [isLoadingMedicines, setIsLoadingMedicines] = useState(false);
 
-  const handleLogin = (email: string, password: string): { success: boolean; error?: string } => {
-    const foundUser = mockUsers.find((u) => u.email === email && u.password === password);
-    if (foundUser) {
+  // Sync Clerk user with our User state
+  useEffect(() => {
+    if (isLoaded && clerkUser) {
+      const role = (clerkUser.publicMetadata?.role as string) || 'CUSTOMER';
+      const primaryEmail = clerkUser.primaryEmailAddress?.emailAddress;
+      
+      // Validate that user has a valid email address
+      if (!primaryEmail) {
+        console.error('User does not have a valid email address');
+        return;
+      }
+      
       setUser({
-        name: foundUser.name,
-        email: foundUser.email,
-        role: foundUser.role,
-        token: 'mock-jwt-token-' + Date.now(),
+        name: clerkUser.fullName || clerkUser.firstName || 'User',
+        email: primaryEmail,
+        role: role as User['role'],
+        token: '', // Will be set when needed
       });
-      return { success: true };
+    } else if (isLoaded && !clerkUser) {
+      setUser(null);
+      setMedicines([]);
     }
-    return { success: false, error: 'Invalid email or password' };
-  };
+  }, [clerkUser, isLoaded]);
+
+  // Load medicines when user is authenticated
+  useEffect(() => {
+    const loadMedicines = async () => {
+      if (!user) return;
+      
+      setIsLoadingMedicines(true);
+      try {
+        const token = await getToken();
+        if (!token) return;
+
+        // Load medicines based on user role
+        // Non-customers (manufacturers, distributors, pharmacies) see only their own medicines
+        // Customers can verify any medicine but don't load all by default
+        const filters = user.role !== 'CUSTOMER' ? { owner: user.email } : {};
+        const response = await medicineAPI.list(token, filters);
+        
+        if (response.success && response.medicines) {
+          setMedicines(response.medicines);
+        }
+      } catch (error) {
+        console.error('Failed to load medicines:', error);
+      } finally {
+        setIsLoadingMedicines(false);
+      }
+    };
+
+    loadMedicines();
+  }, [user, getToken]);
 
   const handleLogout = () => {
     setUser(null);
+    setMedicines([]);
   };
 
-  const handleRegisterMedicine = (medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified'>) => {
+  const handleRegisterMedicine = async (
+    medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified'>
+  ) => {
     if (!user) return { success: false, error: 'Not authenticated' };
-    if (user.role !== 'MANUFACTURER') return { success: false, error: 'Only manufacturers can register medicines' };
-    if (medicines.find((m) => m.batchID === medicine.batchID)) {
-      return { success: false, error: 'Batch ID already exists' };
+    if (user.role !== 'MANUFACTURER') {
+      return { success: false, error: 'Only manufacturers can register medicines' };
     }
 
-    const newMedicine: Medicine = {
-      ...medicine,
-      currentOwner: user.email,
-      currentOwnerRole: user.role,
-      ownerHistory: [{ owner: user.name, role: user.role, date: new Date().toISOString().split('T')[0] }],
-      verified: true,
-    };
+    try {
+      const token = await getToken();
+      if (!token) return { success: false, error: 'Failed to get authentication token' };
 
-    setMedicines([...medicines, newMedicine]);
-    return { success: true };
+      const response = await medicineAPI.register(token, {
+        batchID: medicine.batchID,
+        name: medicine.name,
+        manufacturer: medicine.manufacturer,
+        mfgDate: medicine.mfgDate,
+        expDate: medicine.expDate,
+      });
+
+      if (response.success) {
+        // Reload medicines to get the updated list
+        const listResponse = await medicineAPI.list(token, { owner: user.email });
+        if (listResponse.success && listResponse.medicines) {
+          setMedicines(listResponse.medicines);
+        }
+        return { success: true };
+      }
+
+      return { success: false, error: response.error || 'Registration failed' };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Registration failed' };
+    }
   };
 
-  const handleTransfer = (batchID: string, newOwnerEmail: string, newOwnerRole: string) => {
+  const handleTransfer = async (batchID: string, newOwnerEmail: string, newOwnerRole: string) => {
     if (!user) return { success: false, error: 'Not authenticated' };
 
-    const medicineIndex = medicines.findIndex((m) => m.batchID === batchID);
-    if (medicineIndex === -1) return { success: false, error: 'Medicine not found' };
+    try {
+      const token = await getToken();
+      if (!token) return { success: false, error: 'Failed to get authentication token' };
 
-    const medicine = medicines[medicineIndex];
-    if (medicine.currentOwner !== user.email) {
-      return { success: false, error: 'You are not the current owner of this medicine' };
+      const response = await medicineAPI.transfer(token, batchID, {
+        newOwnerEmail,
+        newOwnerRole,
+      });
+
+      if (response.success) {
+        // Reload medicines to get the updated list
+        const filters = user.role !== 'CUSTOMER' ? { owner: user.email } : {};
+        const listResponse = await medicineAPI.list(token, filters);
+        if (listResponse.success && listResponse.medicines) {
+          setMedicines(listResponse.medicines);
+        }
+        return { success: true };
+      }
+
+      return { success: false, error: response.error || 'Transfer failed' };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Transfer failed' };
     }
-
-    const newOwner = mockUsers.find((u) => u.email === newOwnerEmail);
-    const ownerName = newOwner ? newOwner.name : newOwnerEmail;
-
-    const updatedMedicine: Medicine = {
-      ...medicine,
-      currentOwner: newOwnerEmail,
-      currentOwnerRole: newOwnerRole,
-      ownerHistory: [
-        ...medicine.ownerHistory,
-        { owner: ownerName, role: newOwnerRole, date: new Date().toISOString().split('T')[0] },
-      ],
-    };
-
-    const updatedMedicines = [...medicines];
-    updatedMedicines[medicineIndex] = updatedMedicine;
-    setMedicines(updatedMedicines);
-
-    return { success: true };
   };
 
-  const handleVerify = (batchID: string): { verified: boolean; medicine?: Medicine; error?: string } => {
-    const medicine = medicines.find((m) => m.batchID === batchID);
-    if (!medicine) {
+  const handleVerify = async (
+    batchID: string
+  ): Promise<{ verified: boolean; medicine?: Medicine; error?: string }> => {
+    try {
+      // First check if medicine exists in our local list
+      const localMedicine = medicines.find((m) => m.batchID === batchID);
+      if (localMedicine) {
+        return { verified: true, medicine: localMedicine };
+      }
+      
+      // If not found locally and user is authenticated, try to fetch from backend
+      if (user) {
+        try {
+          const token = await getToken();
+          if (token) {
+            const response = await medicineAPI.list(token, { batchID });
+            if (response.success && response.medicines && response.medicines.length > 0) {
+              return { verified: true, medicine: response.medicines[0] };
+            }
+          }
+        } catch (error: any) {
+          console.error('Backend verification failed:', error);
+          // Fall through to not found error
+        }
+      }
+      
       return { verified: false, error: 'Medicine not found in registry' };
+    } catch (error: any) {
+      return { verified: false, error: error.message || 'Verification failed' };
     }
-    return { verified: true, medicine };
   };
 
   const getMedicineByBatch = (batchID: string) => {
     return medicines.find((m) => m.batchID === batchID);
   };
 
-  if (!user) {
-    return <LoginPage onLogin={handleLogin} />;
+  // Show loading state while Clerk is initializing
+  if (!isLoaded) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-emerald-200 border-t-emerald-600 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <Dashboard
-      user={user}
-      medicines={medicines.filter((m) => m.currentOwner === user.email || user.role === 'CUSTOMER')}
-      onLogout={handleLogout}
-      onRegisterMedicine={handleRegisterMedicine}
-      onTransfer={handleTransfer}
-      onVerify={handleVerify}
-      getMedicineByBatch={getMedicineByBatch}
-    />
+    <>
+      <SignedOut>
+        <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md">
+            <div className="text-center mb-8">
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">MediScan</h1>
+              <p className="text-gray-600">Medicine Verification System</p>
+              <p className="text-sm text-gray-500 mt-2">
+                Sign in to access the platform
+              </p>
+            </div>
+            <div className="bg-white rounded-2xl shadow-xl p-6">
+              <SignIn 
+                appearance={{
+                  elements: {
+                    rootBox: "w-full",
+                    card: "shadow-none"
+                  }
+                }}
+              />
+            </div>
+            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+              <p className="text-sm font-semibold text-blue-900 mb-2">📌 Important: Setting Up User Roles</p>
+              <p className="text-xs text-blue-800 mb-2">
+                After signing up, you need to set your role in Clerk Dashboard:
+              </p>
+              <ol className="text-xs text-blue-800 space-y-1 ml-4 list-decimal">
+                <li>Go to Clerk Dashboard → Users</li>
+                <li>Click on your user</li>
+                <li>Go to "Metadata" tab</li>
+                <li>Add to Public Metadata: <code className="bg-blue-100 px-1 rounded">{"{ \"role\": \"MANUFACTURER\" }"}</code></li>
+              </ol>
+              <p className="text-xs text-blue-700 mt-2">
+                Available roles: MANUFACTURER, DISTRIBUTOR, PHARMACY, CUSTOMER, ADMIN
+              </p>
+            </div>
+          </div>
+        </div>
+      </SignedOut>
+
+      <SignedIn>
+        {user && (
+          <Dashboard
+            user={user}
+            medicines={medicines}
+            isLoadingMedicines={isLoadingMedicines}
+            onLogout={handleLogout}
+            onRegisterMedicine={handleRegisterMedicine}
+            onTransfer={handleTransfer}
+            onVerify={handleVerify}
+            getMedicineByBatch={getMedicineByBatch}
+          />
+        )}
+      </SignedIn>
+    </>
   );
 }

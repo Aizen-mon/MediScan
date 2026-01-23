@@ -4,9 +4,10 @@ import type { Medicine } from '../App';
 interface MedicineListProps {
   medicines: Medicine[];
   userRole: string;
+  isLoading?: boolean;
 }
 
-export function MedicineList({ medicines, userRole }: MedicineListProps) {
+export function MedicineList({ medicines, userRole, isLoading = false }: MedicineListProps) {
   const roleColors: Record<string, string> = {
     MANUFACTURER: 'bg-purple-100 text-purple-700',
     DISTRIBUTOR: 'bg-blue-100 text-blue-700',
@@ -39,7 +40,13 @@ export function MedicineList({ medicines, userRole }: MedicineListProps) {
         </p>
       </div>
 
-      {medicines.length === 0 ? (
+      {isLoading ? (
+        <div className="text-center py-16 bg-gray-50 rounded-2xl">
+          <div className="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-gray-600 mb-1">Loading medicines...</h3>
+          <p className="text-gray-400">Please wait</p>
+        </div>
+      ) : medicines.length === 0 ? (
         <div className="text-center py-16 bg-gray-50 rounded-2xl">
           <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-600 mb-1">No medicines found</h3>
