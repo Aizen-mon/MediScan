@@ -1,4 +1,4 @@
-import { Package, Calendar, Building2, User, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Package, Calendar, Building2, User, CheckCircle2, AlertTriangle, Box } from 'lucide-react';
 import type { Medicine } from '../App';
 
 interface MedicineListProps {
@@ -24,6 +24,17 @@ export function MedicineList({ medicines, userRole, isLoading = false }: Medicin
     const now = new Date();
     const threeMonths = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
     return exp > now && exp < threeMonths;
+  };
+
+  const getStockStatus = (totalUnits: number, remainingUnits: number = 0) => {
+    const percentage = (remainingUnits / totalUnits) * 100;
+    if (remainingUnits === 0) {
+      return { label: 'Out of Stock', color: 'text-red-600', bgColor: 'bg-red-100' };
+    } else if (percentage < 20) {
+      return { label: 'Low Stock', color: 'text-amber-600', bgColor: 'bg-amber-100' };
+    } else {
+      return { label: 'In Stock', color: 'text-green-600', bgColor: 'bg-green-100' };
+    }
   };
 
   return (
@@ -111,6 +122,20 @@ export function MedicineList({ medicines, userRole, isLoading = false }: Medicin
                     <AlertTriangle className="w-4 h-4 text-amber-500" />
                   )}
                 </div>
+
+                {medicine.totalUnits !== undefined && (
+                  <div className="flex items-center gap-2 text-gray-600">
+                    <Box className="w-4 h-4 text-gray-400" />
+                    <span>
+                      Stock: {medicine.remainingUnits ?? medicine.totalUnits}/{medicine.totalUnits} units
+                    </span>
+                    {medicine.remainingUnits !== undefined && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${getStockStatus(medicine.totalUnits, medicine.remainingUnits).bgColor} ${getStockStatus(medicine.totalUnits, medicine.remainingUnits).color}`}>
+                        {getStockStatus(medicine.totalUnits, medicine.remainingUnits).label}
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
                   <User className="w-4 h-4 text-gray-400" />
