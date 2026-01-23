@@ -7,7 +7,7 @@ interface MedicineListProps {
   isLoading?: boolean;
 }
 
-export function MedicineList({ medicines, userRole, isLoading }: MedicineListProps) {
+export function MedicineList({ medicines, userRole, isLoading = false }: MedicineListProps) {
   const roleColors: Record<string, string> = {
     MANUFACTURER: 'bg-purple-100 text-purple-700',
     DISTRIBUTOR: 'bg-blue-100 text-blue-700',

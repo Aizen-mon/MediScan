@@ -13,9 +13,9 @@ async function clerkAuth(req, res, next) {
     }
 
     // Verify the session token with Clerk using verifyToken
-    let verifiedToken;
+    let tokenPayload;
     try {
-      verifiedToken = await clerkClient.verifyToken(sessionToken);
+      tokenPayload = await clerkClient.verifyToken(sessionToken);
     } catch (verifyError) {
       // Provide more specific error messages
       if (verifyError.message?.includes('expired')) {
@@ -27,12 +27,12 @@ async function clerkAuth(req, res, next) {
       throw verifyError; // Re-throw unknown errors
     }
     
-    if (!verifiedToken || !verifiedToken.sub) {
+    if (!tokenPayload || !tokenPayload.sub) {
       return res.status(401).json({ error: "Invalid session token" });
     }
 
     // Get user details from Clerk
-    const user = await clerkClient.users.getUser(verifiedToken.sub);
+    const user = await clerkClient.users.getUser(tokenPayload.sub);
     
     // Safely determine the user's primary email address
     const primaryEmail =
