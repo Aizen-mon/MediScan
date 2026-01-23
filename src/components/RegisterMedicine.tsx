@@ -100,9 +100,13 @@ export function RegisterMedicine({ onRegister }: RegisterMedicineProps) {
     }
 
     const result = onRegister({
-      ...trimmedData,
+      batchID: trimmedData.batchID,
+      name: trimmedData.name,
+      manufacturer: trimmedData.manufacturer,
+      mfgDate: trimmedData.mfgDate,
+      expDate: trimmedData.expDate,
       totalUnits: parseInt(trimmedData.totalUnits, 10),
-    } as any);
+    });
     
     if (result.success) {
       setMessage({ type: 'success', text: 'Medicine registered successfully!' });

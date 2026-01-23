@@ -10,6 +10,9 @@ const Medicine = require("./models/Medicine");
 const ScanLog = require("./models/ScanLog");
 const { clerkAuth, authorizeRoles } = require("./middleware/clerkAuth");
 
+// Constants
+const DEFAULT_CUSTOMER_EMAIL = "CUSTOMER";
+
 const app = express();
 
 // CORS configuration - adjust origins for production
@@ -271,7 +274,7 @@ app.post("/medicine/purchase/:batchID",
 
       // Add to owner history
       med.ownerHistory.push({
-        owner: customerEmail || "CUSTOMER",
+        owner: customerEmail || DEFAULT_CUSTOMER_EMAIL,
         role: "CUSTOMER",
         action: "PURCHASED",
         unitsPurchased: unitsPurchased

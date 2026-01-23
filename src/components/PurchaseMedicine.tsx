@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { ShoppingCart, Package, User, CheckCircle2, AlertCircle, Box } from 'lucide-react';
 import type { Medicine } from '../App';
 
+const DEFAULT_CUSTOMER_EMAIL = 'CUSTOMER';
+
 interface PurchaseMedicineProps {
   medicines: Medicine[];
   onPurchase: (batchID: string, unitsPurchased: number, customerEmail: string) => Promise<{ success: boolean; error?: string }>;
@@ -42,7 +44,7 @@ export function PurchaseMedicine({ medicines, onPurchase }: PurchaseMedicineProp
       return;
     }
 
-    const result = await onPurchase(selectedBatch, units, customerEmail.trim() || 'CUSTOMER');
+    const result = await onPurchase(selectedBatch, units, customerEmail.trim() || DEFAULT_CUSTOMER_EMAIL);
 
     if (result.success) {
       setMessage({ type: 'success', text: `Successfully sold ${units} units!` });
