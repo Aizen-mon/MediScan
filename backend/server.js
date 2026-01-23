@@ -123,13 +123,22 @@ app.post("/medicine/register",
   authorizeRoles("MANUFACTURER"),
   async (req, res) => {
     try {
-      const { batchID, name, manufacturer, mfgDate, expDate } = req.body;
+      const { batchID, name, manufacturer, mfgDate, expDate, totalUnits } = req.body;
 
       // Validate required fields
-      if (!batchID || !name || !manufacturer || !mfgDate || !expDate) {
+      if (!batchID || !name || !manufacturer || !mfgDate || !expDate || !totalUnits) {
         return res.status(400).json({ 
           error: "Missing required fields",
-          required: ["batchID", "name", "manufacturer", "mfgDate", "expDate"]
+          required: ["batchID", "name", "manufacturer", "mfgDate", "expDate", "totalUnits"]
+        });
+      }
+
+      // Validate totalUnits is a positive number
+      const units = parseInt(totalUnits, 10);
+      if (isNaN(units) || units <= 0) {
+        return res.status(400).json({ 
+          error: "Invalid totalUnits",
+          message: "totalUnits must be a positive number"
         });
       }
 
@@ -142,10 +151,17 @@ app.post("/medicine/register",
         manufacturer,
         mfgDate,
         expDate,
+        totalUnits: units,
+        remainingUnits: units, // Initially, all units are remaining
         currentOwner: req.user.email,
         status: "ACTIVE",
         ownerHistory: [
-          { owner: req.user.email, role: req.user.role }
+          { 
+            owner: req.user.email, 
+            role: req.user.role,
+            action: "REGISTERED",
+            unitsPurchased: 0
+          }
         ]
       });
 

@@ -16,6 +16,8 @@ export interface Medicine {
   manufacturer: string;
   mfgDate: string;
   expDate: string;
+  totalUnits: number;
+  remainingUnits?: number;
   currentOwner: string;
   currentOwnerRole?: string;
   ownerHistory: { owner: string; role: string; date?: string; time?: string }[];
@@ -89,7 +91,7 @@ export function App() {
   };
 
   const handleRegisterMedicine = async (
-    medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified'>
+    medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified' | 'remainingUnits'>
   ) => {
     if (!user) return { success: false, error: 'Not authenticated' };
     if (user.role !== 'MANUFACTURER') {
@@ -109,6 +111,7 @@ export function App() {
         manufacturer: medicine.manufacturer,
         mfgDate: medicine.mfgDate,
         expDate: medicine.expDate,
+        totalUnits: medicine.totalUnits,
       });
 
       console.log('Register response:', response);

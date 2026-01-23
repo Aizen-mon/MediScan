@@ -141,6 +141,7 @@ export const medicineAPI = {
     manufacturer: string;
     mfgDate: string;
     expDate: string;
+    totalUnits: number;
   }) => {
     return fetchAPI('/medicine/register', {
       method: 'POST',
