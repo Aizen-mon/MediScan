@@ -13,7 +13,19 @@ async function clerkAuth(req, res, next) {
     }
 
     // Verify the session token with Clerk
-    const session = await clerkClient.sessions.verifySession(sessionToken);
+    let session;
+    try {
+      session = await clerkClient.sessions.verifySession(sessionToken);
+    } catch (verifyError) {
+      // Provide more specific error messages
+      if (verifyError.message?.includes('expired')) {
+        return res.status(401).json({ error: "Session token expired", message: "Please sign in again" });
+      }
+      if (verifyError.message?.includes('invalid')) {
+        return res.status(401).json({ error: "Invalid session token", message: "Authentication failed" });
+      }
+      throw verifyError; // Re-throw unknown errors
+    }
     
     if (!session) {
       return res.status(401).json({ error: "Invalid session token" });
@@ -33,7 +45,10 @@ async function clerkAuth(req, res, next) {
     next();
   } catch (err) {
     console.error("Clerk auth error:", err);
-    return res.status(401).json({ error: "Authentication failed", details: err.message });
+    return res.status(401).json({ 
+      error: "Authentication failed", 
+      message: err.message || "Unable to verify session"
+    });
   }
 }
 

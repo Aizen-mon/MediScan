@@ -90,8 +90,14 @@ export const medicineAPI = {
    * Get list of medicines (with optional filters)
    */
   list: async (sessionToken: string, filters?: { status?: string; owner?: string }) => {
-    const queryParams = new URLSearchParams(filters as any).toString();
-    const endpoint = `/medicine/list${queryParams ? `?${queryParams}` : ''}`;
+    let endpoint = '/medicine/list';
+    
+    if (filters && Object.keys(filters).length > 0) {
+      const params: string[] = [];
+      if (filters.status) params.push(`status=${encodeURIComponent(filters.status)}`);
+      if (filters.owner) params.push(`owner=${encodeURIComponent(filters.owner)}`);
+      endpoint += `?${params.join('&')}`;
+    }
     
     return fetchAPI(endpoint, {
       headers: getAuthHeaders(sessionToken),
