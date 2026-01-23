@@ -100,6 +100,9 @@ export function App() {
       const token = await getToken();
       if (!token) return { success: false, error: 'Failed to get authentication token' };
 
+      console.log('Registering medicine:', medicine);
+      console.log('Using token:', token ? 'Token present' : 'No token');
+
       const response = await medicineAPI.register(token, {
         batchID: medicine.batchID,
         name: medicine.name,
@@ -107,6 +110,8 @@ export function App() {
         mfgDate: medicine.mfgDate,
         expDate: medicine.expDate,
       });
+
+      console.log('Register response:', response);
 
       if (response.success) {
         // Reload medicines to get the updated list
@@ -117,8 +122,9 @@ export function App() {
         return { success: true };
       }
 
-      return { success: false, error: response.error || 'Registration failed' };
+      return { success: false, error: response.error || response.message || 'Registration failed' };
     } catch (error: any) {
+      console.error('Registration error:', error);
       return { success: false, error: error.message || 'Registration failed' };
     }
   };

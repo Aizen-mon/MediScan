@@ -13,9 +13,12 @@ async function clerkAuth(req, res, next) {
     }
 
     // Verify the session token with Clerk using verifyToken
+    // Add clock tolerance to handle minor time sync issues
     let tokenPayload;
     try {
-      tokenPayload = await clerkClient.verifyToken(sessionToken);
+      tokenPayload = await clerkClient.verifyToken(sessionToken, {
+        clockSkewInMs: 10000 // Allow 10 seconds of clock skew
+      });
     } catch (verifyError) {
       // Provide more specific error messages
       if (verifyError.message?.includes('expired')) {

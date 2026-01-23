@@ -355,6 +355,29 @@ app.use((req, res) => {
   });
 });
 
-app.listen(process.env.PORT, () => {
-  console.log(`✅ Server running on http://localhost:${process.env.PORT}`);
-});
+const PORT = process.env.PORT || 5000;
+
+console.log(`📝 Attempting to start server on port ${PORT}...`);
+
+try {
+  const server = app.listen(PORT, () => {
+    console.log(`✅ Server running on http://localhost:${PORT}`);
+    console.log(`✅ Server listening on port ${PORT}`);
+    console.log(`✅ Server address:`, server.address());
+  });
+
+  server.on('error', (error) => {
+    console.error('❌ Server failed to start:', error.message);
+    if (error.code === 'EADDRINUSE') {
+      console.error(`❌ Port ${PORT} is already in use. Please use a different port.`);
+    }
+    process.exit(1);
+  });
+
+  server.on('listening', () => {
+    console.log('✅ Server is now listening for connections');
+  });
+} catch (error) {
+  console.error('❌ Fatal error starting server:', error);
+  process.exit(1);
+}
