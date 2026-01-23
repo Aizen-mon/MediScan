@@ -4,23 +4,41 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const QRCode = require("qrcode");
 const crypto = require("crypto");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
+const { clerkClient } = require("@clerk/clerk-sdk-node");
 
-const User = require("./models/User");
 const Medicine = require("./models/Medicine");
 const ScanLog = require("./models/ScanLog");
-const { auth, authorizeRoles } = require("./middleware/auth");
+const { clerkAuth, authorizeRoles } = require("./middleware/clerkAuth");
 
 const app = express();
-app.use(cors());
+
+// CORS configuration - adjust origins for production
+app.use(cors({
+  origin: process.env.FRONTEND_URL || "http://localhost:5173",
+  credentials: true
+}));
+
 app.use(express.json());
 
+// MongoDB Connection
 mongoose.connect(process.env.MONGO_URL)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.log("❌ MongoDB Error:", err.message));
+  .catch(err => {
+    console.error("❌ MongoDB Error:", err.message);
+    process.exit(1); // Exit if database connection fails
+  });
 
-// ✅ QR Signature
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    message: "MediScan API is running",
+    timestamp: new Date().toISOString(),
+    mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected"
+  });
+});
+
+// ✅ QR Signature - Creates a signed QR code to prevent tampering
 function signBatch(batchID) {
   return crypto
     .createHmac("sha256", process.env.QR_SECRET)
@@ -29,50 +47,51 @@ function signBatch(batchID) {
 }
 
 /* ======================================
-   ✅ AUTH ROUTES
+   ✅ USER PROFILE ROUTES (Clerk-based)
 ====================================== */
 
-// ✅ Register User
-app.post("/auth/register", async (req, res) => {
+// Get current user profile from Clerk
+app.get("/auth/profile", clerkAuth, async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
-
-    const exists = await User.findOne({ email });
-    if (exists) return res.status(400).json({ error: "User already exists" });
-
-    const hashed = await bcrypt.hash(password, 10);
-
-    const user = await User.create({
-      name,
-      email,
-      password: hashed,
-      role: role || "CUSTOMER"
+    res.json({ 
+      success: true,
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+        name: req.user.name,
+        role: req.user.role
+      }
     });
-
-    res.json({ message: "✅ User registered", user: { email: user.email, role: user.role } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ✅ Login User
-app.post("/auth/login", async (req, res) => {
+// Update user role (requires Clerk Dashboard or Admin API)
+app.put("/auth/role", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { userId, role } = req.body;
+    
+    if (!userId || !role) {
+      return res.status(400).json({ error: "userId and role are required" });
+    }
 
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ error: "Invalid email or password" });
+    const validRoles = ["MANUFACTURER", "DISTRIBUTOR", "PHARMACY", "CUSTOMER", "ADMIN"];
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ error: `Invalid role. Must be one of: ${validRoles.join(", ")}` });
+    }
 
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) return res.status(400).json({ error: "Invalid email or password" });
+    // Update user metadata in Clerk
+    await clerkClient.users.updateUser(userId, {
+      publicMetadata: { role }
+    });
 
-    const token = jwt.sign(
-      { id: user._id, email: user.email, role: user.role, name: user.name },
-      process.env.JWT_SECRET,
-      { expiresIn: "2h" }
-    );
-
-    res.json({ message: "✅ Login successful", token, role: user.role, name: user.name });
+    res.json({ 
+      success: true,
+      message: "User role updated successfully",
+      userId,
+      role
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -82,13 +101,37 @@ app.post("/auth/login", async (req, res) => {
    ✅ MEDICINE ROUTES
 ====================================== */
 
+// ✅ Get all medicines (with optional filtering)
+app.get("/medicine/list", clerkAuth, async (req, res) => {
+  try {
+    const { status, owner } = req.query;
+    
+    let filter = {};
+    if (status) filter.status = status;
+    if (owner) filter.currentOwner = owner;
+    
+    const medicines = await Medicine.find(filter).sort({ createdAt: -1 });
+    res.json({ success: true, count: medicines.length, medicines });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ✅ Register Medicine (ONLY Manufacturer)
 app.post("/medicine/register",
-  auth,
+  clerkAuth,
   authorizeRoles("MANUFACTURER"),
   async (req, res) => {
     try {
       const { batchID, name, manufacturer, mfgDate, expDate } = req.body;
+
+      // Validate required fields
+      if (!batchID || !name || !manufacturer || !mfgDate || !expDate) {
+        return res.status(400).json({ 
+          error: "Missing required fields",
+          required: ["batchID", "name", "manufacturer", "mfgDate", "expDate"]
+        });
+      }
 
       const exists = await Medicine.findOne({ batchID });
       if (exists) return res.status(400).json({ error: "Batch already registered" });
@@ -106,7 +149,11 @@ app.post("/medicine/register",
         ]
       });
 
-      res.json({ message: "✅ Medicine Registered", medicine: med });
+      res.status(201).json({ 
+        success: true,
+        message: "✅ Medicine Registered", 
+        medicine: med 
+      });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -115,12 +162,20 @@ app.post("/medicine/register",
 
 // ✅ Transfer Ownership (Manufacturer/Distributor/Pharmacy)
 app.post("/medicine/transfer/:batchID",
-  auth,
+  clerkAuth,
   authorizeRoles("MANUFACTURER", "DISTRIBUTOR", "PHARMACY"),
   async (req, res) => {
     try {
       const batchID = req.params.batchID;
       const { newOwnerEmail, newOwnerRole } = req.body;
+
+      // Validate input
+      if (!newOwnerEmail || !newOwnerRole) {
+        return res.status(400).json({ 
+          error: "Missing required fields",
+          required: ["newOwnerEmail", "newOwnerRole"]
+        });
+      }
 
       const med = await Medicine.findOne({ batchID });
       if (!med) return res.status(404).json({ error: "Batch not found" });
@@ -142,7 +197,11 @@ app.post("/medicine/transfer/:batchID",
 
       await med.save();
 
-      res.json({ message: "✅ Ownership transferred", medicine: med });
+      res.json({ 
+        success: true,
+        message: "✅ Ownership transferred", 
+        medicine: med 
+      });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -151,7 +210,7 @@ app.post("/medicine/transfer/:batchID",
 
 // ✅ Block Medicine (Admin)
 app.post("/medicine/block/:batchID",
-  auth,
+  clerkAuth,
   authorizeRoles("ADMIN"),
   async (req, res) => {
     try {
@@ -163,7 +222,11 @@ app.post("/medicine/block/:batchID",
       med.status = "BLOCKED";
       await med.save();
 
-      res.json({ message: "✅ Medicine BLOCKED", medicine: med });
+      res.json({ 
+        success: true,
+        message: "✅ Medicine BLOCKED", 
+        medicine: med 
+      });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -171,7 +234,7 @@ app.post("/medicine/block/:batchID",
 );
 
 // ✅ QR Code Generation (Any logged-in user can generate)
-app.get("/medicine/qrcode/:batchID", auth, async (req, res) => {
+app.get("/medicine/qrcode/:batchID", clerkAuth, async (req, res) => {
   try {
     const batchID = req.params.batchID;
 
@@ -179,16 +242,22 @@ app.get("/medicine/qrcode/:batchID", auth, async (req, res) => {
     if (!med) return res.status(404).json({ error: "Batch not found" });
 
     const sig = signBatch(batchID);
-    const qrURL = `http://localhost:${process.env.PORT}/medicine/verify/${batchID}?sig=${sig}`;
+    const baseURL = process.env.FRONTEND_URL || `http://localhost:${process.env.PORT}`;
+    const qrURL = `${baseURL}/medicine/verify/${batchID}?sig=${sig}`;
 
     const qr = await QRCode.toDataURL(qrURL);
-    res.json({ batchID, qrURL, qr });
+    res.json({ 
+      success: true,
+      batchID, 
+      qrURL, 
+      qr 
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ✅ Verify Medicine (Public)
+// ✅ Verify Medicine (Public - no auth required)
 app.get("/medicine/verify/:batchID", async (req, res) => {
   try {
     const batchID = req.params.batchID;
@@ -201,7 +270,11 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
         result: "❌ FAKE (QR tampered)",
         scanner: "UNKNOWN"
       });
-      return res.json({ batchID, result: "❌ FAKE (QR tampered/invalid)" });
+      return res.json({ 
+        success: false,
+        batchID, 
+        result: "❌ FAKE (QR tampered/invalid)" 
+      });
     }
 
     const med = await Medicine.findOne({ batchID });
@@ -211,7 +284,11 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
         result: "❌ FAKE (Not Registered)",
         scanner: "UNKNOWN"
       });
-      return res.json({ batchID, result: "❌ FAKE (Not Registered)" });
+      return res.json({ 
+        success: false,
+        batchID, 
+        result: "❌ FAKE (Not Registered)" 
+      });
     }
 
     if (med.status === "BLOCKED") {
@@ -220,7 +297,12 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
         result: "❌ BLOCKED",
         scanner: "UNKNOWN"
       });
-      return res.json({ batchID, result: "❌ BLOCKED Medicine", details: med });
+      return res.json({ 
+        success: false,
+        batchID, 
+        result: "❌ BLOCKED Medicine", 
+        details: med 
+      });
     }
 
     await ScanLog.create({
@@ -230,6 +312,7 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
     });
 
     res.json({
+      success: true,
       batchID,
       result: "✅ GENUINE Medicine Verified",
       details: med,
@@ -242,9 +325,34 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
 });
 
 // ✅ Get Scan Logs (Admin)
-app.get("/logs", auth, authorizeRoles("ADMIN"), async (req, res) => {
-  const logs = await ScanLog.find().sort({ time: -1 });
-  res.json(logs);
+app.get("/logs", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+  try {
+    const logs = await ScanLog.find().sort({ time: -1 });
+    res.json({ 
+      success: true,
+      count: logs.length,
+      logs 
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Error handling middleware
+app.use((err, req, res, next) => {
+  console.error("Server error:", err);
+  res.status(500).json({ 
+    error: "Internal server error",
+    message: err.message 
+  });
+});
+
+// ✅ 404 handler
+app.use((req, res) => {
+  res.status(404).json({ 
+    error: "Route not found",
+    path: req.path 
+  });
 });
 
 app.listen(process.env.PORT, () => {
