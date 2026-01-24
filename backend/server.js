@@ -15,13 +15,36 @@ const DEFAULT_CUSTOMER_EMAIL = "CUSTOMER";
 
 const app = express();
 
-// CORS configuration - adjust origins for production
+// CORS configuration - allow multiple origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://10.9.5.204:5173',
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:5173",
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log(`⚠️  CORS blocked origin: ${origin}`);
+      callback(null, true); // Allow all in development
+    }
+  },
   credentials: true
 }));
 
 app.use(express.json());
+
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
+  next();
+});
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGO_URL)
@@ -30,6 +53,28 @@ mongoose.connect(process.env.MONGO_URL)
     console.error("❌ MongoDB Error:", err.message);
     process.exit(1); // Exit if database connection fails
   });
+
+// Debug endpoint to check medicines by owner (no auth needed for testing)
+app.get("/debug/medicines/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
+    const medicines = await Medicine.find({ 
+      currentOwner: new RegExp(`^${email}$`, 'i') 
+    });
+    res.json({ 
+      email, 
+      count: medicines.length, 
+      medicines: medicines.map(m => ({
+        batchID: m.batchID,
+        name: m.name,
+        currentOwner: m.currentOwner,
+        status: m.status
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Health check endpoint
 app.get("/health", (req, res) => {
@@ -56,16 +101,126 @@ function signBatch(batchID) {
 // Get current user profile from Clerk
 app.get("/auth/profile", clerkAuth, async (req, res) => {
   try {
+    const user = await clerkClient.users.getUser(req.user.id);
+    
     res.json({ 
       success: true,
       user: {
         id: req.user.id,
         email: req.user.email,
         name: req.user.name,
-        role: req.user.role
+        role: req.user.role,
+        companyName: user.publicMetadata?.companyName || ""
       }
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update user profile (company name)
+app.put("/auth/profile", clerkAuth, async (req, res) => {
+  try {
+    const { companyName } = req.body;
+    
+    if (!companyName || companyName.trim() === "") {
+      return res.status(400).json({ error: "Company name is required" });
+    }
+
+    // Get current user data to check if company name was already set
+    const user = await clerkClient.users.getUser(req.user.id);
+    const hasCompanyNameSet = user.publicMetadata?.hasCompanyNameSet || false;
+
+    if (hasCompanyNameSet) {
+      return res.status(403).json({ 
+        error: "Company name can only be changed once. Please contact administrator to update."
+      });
+    }
+
+    // Update user metadata in Clerk - preserve existing metadata
+    await clerkClient.users.updateUser(req.user.id, {
+      publicMetadata: { 
+        ...user.publicMetadata,
+        companyName: companyName.trim(),
+        hasCompanyNameSet: true
+      }
+    });
+
+    res.json({ 
+      success: true,
+      message: "Profile updated successfully",
+      companyName: companyName.trim()
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get list of companies (for transfer dropdown)
+app.get("/companies/list", clerkAuth, async (req, res) => {
+  try {
+    const { role } = req.query;
+    const currentUserEmail = req.user.email.toLowerCase();
+    
+    console.log("📋 Companies list request:");
+    console.log("  Current user:", currentUserEmail);
+    console.log("  Current user role:", req.user.role);
+    console.log("  Role filter:", role || "none");
+    
+    // Get all users from Clerk
+    const userListResponse = await clerkClient.users.getUserList({ limit: 500 });
+    const users = userListResponse.data || userListResponse || [];
+    
+    console.log(`  Total users from Clerk: ${users.length}`);
+    
+    // Debug: log first few users
+    users.slice(0, 3).forEach(u => {
+      console.log(`  Sample user: ${u.emailAddresses[0]?.emailAddress}`, {
+        role: u.publicMetadata?.role,
+        companyName: u.publicMetadata?.companyName,
+        metadata: u.publicMetadata
+      });
+    });
+    
+    // Filter and map to companies
+    const companies = users
+      .filter(u => {
+        const userRole = u.publicMetadata?.role;
+        const companyName = u.publicMetadata?.companyName;
+        const userEmail = u.emailAddresses[0]?.emailAddress?.toLowerCase();
+        
+        // Exclude current user from list
+        if (userEmail === currentUserEmail) {
+          return false;
+        }
+        
+        // Filter by role if specified
+        if (role && userRole !== role) {
+          return false;
+        }
+        
+        // Only include users with company names and not customers
+        const include = companyName && userRole !== 'CUSTOMER';
+        if (include) {
+          console.log(`  ✅ Including: ${userEmail} - ${companyName} (${userRole})`);
+        }
+        return include;
+      })
+      .map(u => ({
+        email: u.emailAddresses[0]?.emailAddress,
+        companyName: u.publicMetadata?.companyName,
+        role: u.publicMetadata?.role
+      }));
+
+    console.log(`  ✅ Returning ${companies.length} companies`);
+
+    res.json({ 
+      success: true,
+      count: companies.length,
+      companies 
+    });
+  } catch (err) {
+    console.error("❌ Companies list error:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -107,15 +262,120 @@ app.put("/auth/role", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
 // ✅ Get all medicines (with optional filtering)
 app.get("/medicine/list", clerkAuth, async (req, res) => {
   try {
-    const { status, owner } = req.query;
+    console.log("📋 Fetching medicine list...");
+    console.log("Query params:", req.query);
+    console.log("User:", req.user?.email);
+    console.log("User role:", req.user?.role);
     
+    const { status, owner, batchID } = req.query;
+    
+    // If searching by batchID (for verification), return that specific medicine
+    if (batchID) {
+      const medicine = await Medicine.findOne({ batchID });
+      console.log(`✅ Batch search for ${batchID}: ${medicine ? 'Found' : 'Not found'}`);
+      return res.json({ 
+        success: true, 
+        count: medicine ? 1 : 0, 
+        medicines: medicine ? [medicine] : []
+      });
+    }
+    
+    // Security: Customers see their purchase history
+    if (req.user.role === 'CUSTOMER') {
+      // See their purchase history
+      const purchases = await Medicine.find({
+        'ownerHistory.owner': new RegExp(`^${req.user.email}$`, 'i'),
+        'ownerHistory.action': 'PURCHASED'
+      }).sort({ createdAt: -1 });
+      
+      console.log(`✅ Found ${purchases.length} purchases for customer`);
+      console.log(`   Medicine IDs: ${purchases.map(m => m.batchID).join(', ')}`);
+      
+      return res.json({ 
+        success: true, 
+        count: purchases.length, 
+        medicines: purchases
+      });
+    }
+    
+    // Non-customers (MANUFACTURER, DISTRIBUTOR, PHARMACY) see their own medicines
     let filter = {};
     if (status) filter.status = status;
-    if (owner) filter.currentOwner = owner;
+    
+    if (owner) {
+      // Case-insensitive email search
+      // Show medicines where user is current owner OR has received units via transfer
+      const ownerRegex = new RegExp(`^${owner}$`, 'i');
+      
+      filter.$or = [
+        { currentOwner: ownerRegex },
+        { 
+          'ownerHistory': {
+            $elemMatch: {
+              owner: ownerRegex,
+              action: 'TRANSFERRED',
+              unitsPurchased: { $gt: 0 }
+            }
+          }
+        }
+      ];
+    }
+    
+    console.log("Filter:", JSON.stringify(filter));
     
     const medicines = await Medicine.find(filter).sort({ createdAt: -1 });
-    res.json({ success: true, count: medicines.length, medicines });
+    console.log(`✅ Found ${medicines.length} medicines`);
+    
+    // Filter medicines to only show those where user has units available
+    const medicinesWithUnits = medicines.filter(med => {
+      const userEmail = (owner || req.user?.email || '').toLowerCase();
+      
+      console.log(`\n  Checking ${med.batchID} for user ${userEmail}:`);
+      
+      // Always calculate from ownerHistory for accurate tracking
+      let receivedUnits = 0;
+      let transferredOutUnits = 0;
+      let soldUnits = 0;
+      
+      med.ownerHistory.forEach((h, idx) => {
+        console.log(`    [${idx}] action: ${h.action}, owner: ${h.owner}, from: ${h.from}, units: ${h.unitsPurchased}`);
+        
+        // Units received by this user (either as manufacturer or via transfer)
+        if (h.action === 'REGISTERED' && h.owner.toLowerCase() === userEmail) {
+          receivedUnits += med.totalUnits || 0;
+          console.log(`      ✅ Original owner, total units: ${med.totalUnits}`);
+        }
+        if (h.action === 'TRANSFERRED' && h.owner.toLowerCase() === userEmail) {
+          receivedUnits += h.unitsPurchased || 0;
+          console.log(`      ✅ Received ${h.unitsPurchased} units`);
+        }
+        
+        // Units transferred out by this user
+        if (h.action === 'TRANSFERRED' && h.from && h.from.toLowerCase() === userEmail) {
+          transferredOutUnits += h.unitsPurchased || 0;
+          console.log(`      ❌ Transferred out ${h.unitsPurchased} units`);
+        }
+        
+        // Units sold to customers by this user
+        if (h.action === 'PURCHASED' && h.from && h.from.toLowerCase() === userEmail) {
+          soldUnits += h.unitsPurchased || 0;
+          console.log(`      💰 Sold ${h.unitsPurchased} units`);
+        }
+      });
+      
+      const availableUnits = receivedUnits - transferredOutUnits - soldUnits;
+      console.log(`    Total: received ${receivedUnits} - transferred ${transferredOutUnits} - sold ${soldUnits} = ${availableUnits}`);
+      
+      const hasUnits = availableUnits > 0;
+      console.log(`    Result: ${hasUnits ? '✅ SHOW' : '❌ HIDE'} (${availableUnits} units)`);
+      return hasUnits;
+    });
+    
+    console.log(`✅ Filtered to ${medicinesWithUnits.length} medicines with available units`);
+    
+    res.json({ success: true, count: medicinesWithUnits.length, medicines: medicinesWithUnits });
   } catch (err) {
+    console.error("❌ Error fetching medicines:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -186,42 +446,131 @@ app.post("/medicine/transfer/:batchID",
   async (req, res) => {
     try {
       const batchID = req.params.batchID;
-      const { newOwnerEmail, newOwnerRole } = req.body;
+      const { newOwnerEmail, newOwnerRole, unitsToTransfer } = req.body;
+
+      console.log("🔄 Transfer request:");
+      console.log("  BatchID:", batchID);
+      console.log("  Current user:", req.user.email);
+      console.log("  New owner email:", newOwnerEmail);
+      console.log("  New owner role:", newOwnerRole);
+      console.log("  Units to transfer:", unitsToTransfer);
 
       // Validate input
-      if (!newOwnerEmail || !newOwnerRole) {
+      if (!newOwnerEmail || !newOwnerRole || !unitsToTransfer) {
         return res.status(400).json({ 
           error: "Missing required fields",
-          required: ["newOwnerEmail", "newOwnerRole"]
+          required: ["newOwnerEmail", "newOwnerRole", "unitsToTransfer"]
         });
       }
 
+      const units = parseInt(unitsToTransfer);
+      if (isNaN(units) || units <= 0) {
+        return res.status(400).json({ error: "Invalid units to transfer" });
+      }
+
       const med = await Medicine.findOne({ batchID });
-      if (!med) return res.status(404).json({ error: "Batch not found" });
+      if (!med) {
+        console.log("❌ Medicine not found with batchID:", batchID);
+        return res.status(404).json({ error: "Batch not found" });
+      }
+
+      console.log("  Current owner in DB:", med.currentOwner);
+      console.log("  Medicine status:", med.status);
+      console.log("  Remaining units:", med.remainingUnits);
 
       if (med.status !== "ACTIVE") {
         return res.status(400).json({ error: "Medicine not ACTIVE" });
       }
 
-      // ✅ Only current owner can transfer
-      if (med.currentOwner !== req.user.email) {
-        return res.status(403).json({ error: "Only current owner can transfer" });
+      // Calculate available units for the user from ownerHistory
+      const userEmail = (req.user.email || "").toLowerCase();
+      
+      console.log(`  Calculating available units for: ${userEmail}`);
+      
+      // Always calculate from ownerHistory for accurate tracking
+      let receivedUnits = 0;
+      let transferredOutUnits = 0;
+      let soldUnits = 0;
+      
+      console.log(`  Checking owner history (${med.ownerHistory.length} entries):`);
+      med.ownerHistory.forEach((h, idx) => {
+        console.log(`    [${idx}] action: ${h.action}, owner: ${h.owner}, from: ${h.from}, units: ${h.unitsPurchased}`);
+        
+        // Units received (either as manufacturer or via transfer)
+        if (h.action === 'REGISTERED' && h.owner.toLowerCase() === userEmail) {
+          receivedUnits += med.totalUnits || 0;
+          console.log(`      ✅ Original owner, total units: ${med.totalUnits}`);
+        }
+        if (h.action === 'TRANSFERRED' && h.owner.toLowerCase() === userEmail) {
+          receivedUnits += h.unitsPurchased || 0;
+          console.log(`      ✅ Received ${h.unitsPurchased} units`);
+        }
+        
+        // Units transferred out
+        if (h.action === 'TRANSFERRED' && h.from && h.from.toLowerCase() === userEmail) {
+          transferredOutUnits += h.unitsPurchased || 0;
+          console.log(`      ❌ Transferred out ${h.unitsPurchased} units`);
+        }
+        
+        // Units sold
+        if (h.action === 'PURCHASED' && h.from && h.from.toLowerCase() === userEmail) {
+          soldUnits += h.unitsPurchased || 0;
+          console.log(`      💰 Sold ${h.unitsPurchased} units`);
+        }
+      });
+      
+      const availableUnits = receivedUnits - transferredOutUnits - soldUnits;
+      console.log(`  Total: received ${receivedUnits} - transferred out ${transferredOutUnits} - sold ${soldUnits} = ${availableUnits}`);
+
+      console.log("  Available units for user:", availableUnits);
+
+      // Check if enough units available
+      if (availableUnits < units) {
+        return res.status(400).json({ 
+          error: "Insufficient units",
+          available: availableUnits,
+          requested: units
+        });
       }
 
-      med.currentOwner = newOwnerEmail;
+      // Only original owner or someone who received units can transfer
+      if (availableUnits === 0) {
+        console.log(`❌ Transfer denied: ${req.user.email} has no units to transfer`);
+        return res.status(403).json({ 
+          error: "You don't have any units of this medicine to transfer",
+          currentOwner: med.currentOwner,
+          requestedBy: req.user.email
+        });
+      }
+
+      // If manufacturer is transferring, reduce their remainingUnits
+      if (med.currentOwner.toLowerCase() === userEmail) {
+        med.remainingUnits -= units;
+        console.log(`  Manufacturer transfer: reduced remainingUnits to ${med.remainingUnits}`);
+      } else {
+        console.log(`  Distributor/Pharmacy transfer: units tracked in ownerHistory only`);
+      }
+
+      // Add to history with units transferred
       med.ownerHistory.push({
         owner: newOwnerEmail,
-        role: newOwnerRole || "UNKNOWN"
+        role: newOwnerRole || "UNKNOWN",
+        action: "TRANSFERRED",
+        unitsPurchased: units,
+        from: req.user.email
       });
 
       await med.save();
 
+      console.log(`✅ Transfer successful: ${units} units from ${req.user.email} → ${newOwnerEmail}`);
+
       res.json({ 
         success: true,
-        message: "✅ Ownership transferred", 
+        message: `✅ ${units} units transferred successfully`, 
         medicine: med 
       });
     } catch (err) {
+      console.error("❌ Transfer error:", err);
       res.status(500).json({ error: err.message });
     }
   }
@@ -234,10 +583,19 @@ app.post("/medicine/purchase/:batchID",
   async (req, res) => {
     try {
       const batchID = req.params.batchID;
-      const { unitsPurchased, customerEmail } = req.body;
+      const { customerEmail } = req.body;
+      
+      // Parse unitsPurchased as integer
+      const unitsPurchased = parseInt(req.body.unitsPurchased, 10);
+
+      console.log("🛒 Purchase request:");
+      console.log("  BatchID:", batchID);
+      console.log("  Units to purchase:", unitsPurchased);
+      console.log("  Customer email:", customerEmail);
+      console.log("  Current user:", req.user.email);
 
       // Validate input
-      if (!unitsPurchased || unitsPurchased <= 0) {
+      if (isNaN(unitsPurchased) || unitsPurchased <= 0) {
         return res.status(400).json({ 
           error: "Invalid units",
           message: "unitsPurchased must be a positive number"
@@ -247,25 +605,71 @@ app.post("/medicine/purchase/:batchID",
       const med = await Medicine.findOne({ batchID });
       if (!med) return res.status(404).json({ error: "Batch not found" });
 
+      console.log("  Before purchase - Remaining units:", med.remainingUnits);
+
       if (med.status !== "ACTIVE") {
         return res.status(400).json({ error: "Medicine not ACTIVE" });
       }
 
-      // ✅ Only current owner can sell/reduce stock
-      if (med.currentOwner !== req.user.email) {
-        return res.status(403).json({ error: "Only current owner can process sales" });
-      }
+      // Calculate available units for the user
+      const userEmail = (req.user.email || "").toLowerCase();
+      
+      console.log(`  Calculating available units for: ${userEmail}`);
+      
+      // Always calculate from ownerHistory for accurate tracking
+      let receivedUnits = 0;
+      let transferredOutUnits = 0;
+      let soldUnits = 0;
+      
+      med.ownerHistory.forEach(h => {
+        // Units received (either as manufacturer or via transfer)
+        if (h.action === 'REGISTERED' && h.owner.toLowerCase() === userEmail) {
+          receivedUnits += med.totalUnits || 0;
+        }
+        if (h.action === 'TRANSFERRED' && h.owner.toLowerCase() === userEmail) {
+          receivedUnits += h.unitsPurchased || 0;
+        }
+        // Units transferred out
+        if (h.action === 'TRANSFERRED' && h.from && h.from.toLowerCase() === userEmail) {
+          transferredOutUnits += h.unitsPurchased || 0;
+        }
+        // Units sold to customers
+        if (h.action === 'PURCHASED' && h.from && h.from.toLowerCase() === userEmail) {
+          soldUnits += h.unitsPurchased || 0;
+        }
+      });
+      
+      const availableUnits = receivedUnits - transferredOutUnits - soldUnits;
+      console.log(`  Received: ${receivedUnits}, transferred out: ${transferredOutUnits}, sold: ${soldUnits}, available: ${availableUnits}`);
 
-      // Check if enough units are available
-      if (med.remainingUnits < unitsPurchased) {
-        return res.status(400).json({ 
-          error: "Insufficient stock",
-          message: `Only ${med.remainingUnits} units available`
+      console.log(`  Available units for sale: ${availableUnits}`);
+
+      // Check if user has any units to sell
+      if (availableUnits === 0) {
+        return res.status(403).json({ 
+          error: "You don't have any units of this medicine to sell",
+          currentOwner: med.currentOwner,
+          requestedBy: req.user.email
         });
       }
 
-      // Reduce stock
-      med.remainingUnits -= unitsPurchased;
+      // Check if enough units are available
+      if (availableUnits < unitsPurchased) {
+        return res.status(400).json({ 
+          error: "Insufficient stock",
+          message: `Only ${availableUnits} units available`
+        });
+      }
+
+      // Only reduce remainingUnits if seller is the manufacturer
+      if (med.currentOwner.toLowerCase() === userEmail) {
+        med.remainingUnits -= unitsPurchased;
+        console.log(`  Manufacturer sale: reduced remainingUnits to ${med.remainingUnits}`);
+      } else {
+        console.log(`  Distributor/Pharmacy sale: units tracked in ownerHistory only`);
+      }
+      
+      console.log("  After purchase - Remaining units:", med.remainingUnits);
       
       // Update status if sold out
       if (med.remainingUnits === 0) {
@@ -277,10 +681,13 @@ app.post("/medicine/purchase/:batchID",
         owner: customerEmail || DEFAULT_CUSTOMER_EMAIL,
         role: "CUSTOMER",
         action: "PURCHASED",
-        unitsPurchased: unitsPurchased
+        unitsPurchased: unitsPurchased,
+        from: req.user.email
       });
 
       await med.save();
+
+      console.log(`✅ Purchase successful: ${unitsPurchased} units sold to ${customerEmail || 'CUSTOMER'}`);
 
       res.json({ 
         success: true,
@@ -445,7 +852,7 @@ const PORT = process.env.PORT || 5000;
 console.log(`📝 Attempting to start server on port ${PORT}...`);
 
 try {
-  const server = app.listen(PORT, () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Server running on http://localhost:${PORT}`);
     console.log(`✅ Server listening on port ${PORT}`);
     console.log(`✅ Server address:`, server.address());

@@ -3,7 +3,21 @@
  * Handles all backend API communications
  */
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_URL = "https://65b76461956d.ngrok-free.app";
+
+//but erverytime ngrok restarts, the url changes. 
+/// you are right thats why we need a static ip or other hosting service but this is ok for demo 
+//// Io r u cna use AWS or something but u get tht idea
+
+// We have purchased domain, and I have google cloud hosting. So, can we do it on this?
+// yes yes ys you can . first lets see if this works fine . then we can deploy it on google cloud
+//ok restart UI server
+//working
+// perfect  now what you do it use chat gpt and host these on google cloud and you are done.
+//ok
+// i wikll go now have dinner then ping me if issues. ok ?
+//it's continous refreshing on mohit's pc
+
 
 interface ApiResponse<T = any> {
   success?: boolean;
@@ -98,6 +112,17 @@ export const authAPI = {
   },
 
   /**
+   * Update user profile (company name)
+   */
+  updateProfile: async (sessionToken: string, data: { companyName: string }) => {
+    return fetchAPI('/auth/profile', {
+      method: 'PUT',
+      headers: getAuthHeaders(sessionToken),
+      body: JSON.stringify(data),
+    });
+  },
+
+  /**
    * Update user role (Admin only)
    */
   updateRole: async (sessionToken: string, userId: string, role: string) => {
@@ -117,13 +142,14 @@ export const medicineAPI = {
   /**
    * Get list of medicines (with optional filters)
    */
-  list: async (sessionToken: string, filters?: { status?: string; owner?: string }) => {
+  list: async (sessionToken: string, filters?: { status?: string; owner?: string; batchID?: string }) => {
     let endpoint = '/medicine/list';
     
     if (filters && Object.keys(filters).length > 0) {
       const params: string[] = [];
       if (filters.status) params.push(`status=${encodeURIComponent(filters.status)}`);
       if (filters.owner) params.push(`owner=${encodeURIComponent(filters.owner)}`);
+      if (filters.batchID) params.push(`batchID=${encodeURIComponent(filters.batchID)}`);
       endpoint += `?${params.join('&')}`;
     }
     
@@ -156,6 +182,7 @@ export const medicineAPI = {
   transfer: async (sessionToken: string, batchID: string, transferData: {
     newOwnerEmail: string;
     newOwnerRole: string;
+    unitsToTransfer: number;
   }) => {
     return fetchAPI(`/medicine/transfer/${batchID}`, {
       method: 'POST',
@@ -215,6 +242,22 @@ export const logsAPI = {
    */
   getScanLogs: async (sessionToken: string) => {
     return fetchAPI('/logs', {
+      headers: getAuthHeaders(sessionToken),
+    });
+  },
+};
+
+// ============================================
+// COMPANIES API
+// ============================================
+
+export const companiesAPI = {
+  /**
+   * Get list of companies
+   */
+  list: async (sessionToken: string, role?: string) => {
+    const endpoint = role ? `/companies/list?role=${role}` : '/companies/list';
+    return fetchAPI(endpoint, {
       headers: getAuthHeaders(sessionToken),
     });
   },

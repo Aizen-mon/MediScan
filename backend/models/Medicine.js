@@ -22,6 +22,7 @@ const MedicineSchema = new mongoose.Schema({
       role: String,
       action: String, // REGISTERED / TRANSFERRED / PURCHASED
       unitsPurchased: { type: Number, default: 0 },
+      from: String, // Who transferred/sold this (for tracking outgoing transfers/sales)
       time: { type: Date, default: Date.now }
     }
   ],

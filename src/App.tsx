@@ -7,6 +7,7 @@ export interface User {
   name: string;
   email: string;
   role: 'MANUFACTURER' | 'DISTRIBUTOR' | 'PHARMACY' | 'CUSTOMER' | 'ADMIN';
+  companyName?: string;
   token: string;
 }
 
@@ -36,6 +37,7 @@ export function App() {
   useEffect(() => {
     if (isLoaded && clerkUser) {
       const role = (clerkUser.publicMetadata?.role as string) || 'CUSTOMER';
+      const companyName = (clerkUser.publicMetadata?.companyName as string) || '';
       const primaryEmail = clerkUser.primaryEmailAddress?.emailAddress;
       
       // Validate that user has a valid email address
@@ -48,6 +50,7 @@ export function App() {
         name: clerkUser.fullName || clerkUser.firstName || 'User',
         email: primaryEmail,
         role: role as User['role'],
+        companyName: companyName,
         token: '', // Will be set when needed
       });
     } else if (isLoaded && !clerkUser) {
@@ -67,9 +70,16 @@ export function App() {
         if (!token) return;
 
         // Load medicines based on user role
-        // Non-customers (manufacturers, distributors, pharmacies) see only their own medicines
-        // Customers can verify any medicine but don't load all by default
-        const filters = user.role !== 'CUSTOMER' ? { owner: user.email } : {};
+        let filters = {};
+        
+        if (user.role === 'CUSTOMER') {
+          // Customers see their purchase history (no filters needed, backend handles it)
+          filters = {};
+        } else {
+          // Non-customers see medicines they own
+          filters = { owner: user.email };
+        }
+        
         const response = await medicineAPI.list(token, filters);
         
         if (response.success && response.medicines) {
@@ -91,7 +101,7 @@ export function App() {
   };
 
   const handleRegisterMedicine = async (
-    medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified' | 'remainingUnits'>
+    medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified' >
   ) => {
     if (!user) return { success: false, error: 'Not authenticated' };
     if (user.role !== 'MANUFACTURER') {
@@ -118,21 +128,23 @@ export function App() {
 
       if (response.success) {
         // Reload medicines to get the updated list
-        const listResponse = await medicineAPI.list(token, { owner: user.email });
-        if (listResponse.success && listResponse.medicines) {
-          setMedicines(listResponse.medicines);
-        }
+        // const listResponse = await medicineAPI.list(token, { owner: user.email });
+        // if (listResponse.success && listResponse.medicines) {
+        //   setMedicines(listResponse.medicines);
+        // }
+        console.log("Medicine registered successfully");
         return { success: true };
       }
 
-      return { success: false, error: response.error || response.message || 'Registration failed' };
+      return { success: false, error: response.error || response.message || 'Registration failed from response back end.' };
     } catch (error: any) {
       console.error('Registration error:', error);
-      return { success: false, error: error.message || 'Registration failed' };
+      return { success: false, error: error.message || 'Registration failed from back end' };
     }
   };
+  // this did not fix that ?
 
-  const handleTransfer = async (batchID: string, newOwnerEmail: string, newOwnerRole: string) => {
+  const handleTransfer = async (batchID: string, newOwnerEmail: string, newOwnerRole: string, unitsToTransfer: number) => {
     if (!user) return { success: false, error: 'Not authenticated' };
 
     try {
@@ -142,6 +154,7 @@ export function App() {
       const response = await medicineAPI.transfer(token, batchID, {
         newOwnerEmail,
         newOwnerRole,
+        unitsToTransfer,
       });
 
       if (response.success) {
@@ -192,30 +205,30 @@ export function App() {
     batchID: string
   ): Promise<{ verified: boolean; medicine?: Medicine; error?: string }> => {
     try {
-      // First check if medicine exists in our local list
-      const localMedicine = medicines.find((m) => m.batchID === batchID);
-      if (localMedicine) {
-        return { verified: true, medicine: localMedicine };
+      console.log('🔍 Verifying medicine:', batchID);
+      
+      // Use the medicine list API with batchID parameter
+      const token = await getToken();
+      console.log('Token obtained:', !!token);
+      
+      if (!token) {
+        console.error('No authentication token available');
+        return { verified: false, error: 'Authentication required' };
+      }
+
+      console.log('Calling medicineAPI.list with batchID:', batchID);
+      const response = await medicineAPI.list(token, { batchID });
+      console.log('API response:', response);
+      
+      if (response.success && response.medicines && response.medicines.length > 0) {
+        console.log('✅ Medicine found:', response.medicines[0]);
+        return { verified: true, medicine: response.medicines[0] };
       }
       
-      // If not found locally and user is authenticated, try to fetch from backend
-      if (user) {
-        try {
-          const token = await getToken();
-          if (token) {
-            const response = await medicineAPI.list(token, { batchID });
-            if (response.success && response.medicines && response.medicines.length > 0) {
-              return { verified: true, medicine: response.medicines[0] };
-            }
-          }
-        } catch (error: any) {
-          console.error('Backend verification failed:', error);
-          // Fall through to not found error
-        }
-      }
-      
+      console.log('❌ Medicine not found in response');
       return { verified: false, error: 'Medicine not found in registry' };
     } catch (error: any) {
+      console.error('❌ Verification error:', error);
       return { verified: false, error: error.message || 'Verification failed' };
     }
   };

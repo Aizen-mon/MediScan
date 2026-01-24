@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useClerk } from '@clerk/clerk-react';
+import { useClerk, useAuth } from '@clerk/clerk-react';
 import {
   Shield,
   LogOut,
@@ -20,6 +20,7 @@ import { GenerateQR } from './GenerateQR';
 import { VerifyMedicine } from './VerifyMedicine';
 import { MedicineList } from './MedicineList';
 import { PurchaseMedicine } from './PurchaseMedicine';
+import { Profile } from './Profile';
 
 interface DashboardProps {
   user: UserType;
@@ -29,13 +30,13 @@ interface DashboardProps {
   onRegisterMedicine: (
     medicine: Omit<Medicine, 'currentOwner' | 'currentOwnerRole' | 'ownerHistory' | 'verified'>
   ) => { success: boolean; error?: string };
-  onTransfer: (batchID: string, newOwnerEmail: string, newOwnerRole: string) => { success: boolean; error?: string };
+  onTransfer: (batchID: string, newOwnerEmail: string, newOwnerRole: string, unitsToTransfer: number) => Promise<{ success: boolean; error?: string }>;
   onPurchase: (batchID: string, unitsPurchased: number, customerEmail: string) => Promise<{ success: boolean; error?: string }>;
   onVerify: (batchID: string) => { verified: boolean; medicine?: Medicine; error?: string };
   getMedicineByBatch: (batchID: string) => Medicine | undefined;
 }
 
-type Tab = 'overview' | 'register' | 'transfer' | 'purchase' | 'qrcode' | 'verify';
+type Tab = 'overview' | 'register' | 'transfer' | 'purchase' | 'qrcode' | 'verify' | 'profile';
 
 const roleColors: Record<string, string> = {
   MANUFACTURER: 'bg-purple-100 text-purple-700',
@@ -57,6 +58,7 @@ export function Dashboard({
   getMedicineByBatch,
 }: DashboardProps) {
   const { signOut } = useClerk();
+  const { getToken } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -72,6 +74,7 @@ export function Dashboard({
     { id: 'purchase' as Tab, label: 'Process Sale', icon: ShoppingCart, show: user.role === 'PHARMACY' || user.role === 'DISTRIBUTOR' },
     { id: 'qrcode' as Tab, label: 'QR Code', icon: QrCode, show: true },
     { id: 'verify' as Tab, label: 'Verify', icon: CheckCircle2, show: true },
+    { id: 'profile' as Tab, label: 'Profile', icon: User, show: true },
   ].filter((tab) => tab.show);
 
   return (
@@ -85,7 +88,7 @@ export function Dashboard({
               <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-200">
                 <Shield className="w-5 h-5 text-white" />
               </div>
-              <span className="font-bold text-gray-900 hidden sm:block">Pharma Verify</span>
+              <span className="font-bold text-gray-900 hidden sm:block">MediScan</span>
             </div>
 
             {/* Desktop Navigation */}
@@ -193,27 +196,33 @@ export function Dashboard({
         {/* Tab Content */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           {activeTab === 'overview' && (
-            <MedicineList medicines={medicines} userRole={user.role} isLoading={isLoadingMedicines} />
+            <MedicineList medicines={medicines} userRole={user.role} userEmail={user.email} isLoading={isLoadingMedicines} />
           )}
           {activeTab === 'register' && user.role === 'MANUFACTURER' && (
             <RegisterMedicine onRegister={onRegisterMedicine} />
           )}
           {activeTab === 'transfer' && (
             <TransferOwnership
-              medicines={medicines.filter((m) => m.currentOwner === user.email)}
+              medicines={medicines}
+              getToken={getToken}
               onTransfer={onTransfer}
+              userEmail={user.email}
             />
           )}
           {activeTab === 'purchase' && (user.role === 'PHARMACY' || user.role === 'DISTRIBUTOR') && (
             <PurchaseMedicine
-              medicines={medicines.filter((m) => m.currentOwner === user.email)}
+              medicines={medicines}
               onPurchase={onPurchase}
+              userEmail={user.email}
             />
           )}
           {activeTab === 'qrcode' && (
             <GenerateQR getMedicineByBatch={getMedicineByBatch} />
           )}
           {activeTab === 'verify' && <VerifyMedicine onVerify={onVerify} />}
+          {activeTab === 'profile' && (
+            <Profile user={user} getToken={getToken} onUpdate={() => {}} />
+          )}
         </div>
       </main>
     </div>

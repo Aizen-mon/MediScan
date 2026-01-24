@@ -7,9 +7,48 @@ const DEFAULT_CUSTOMER_EMAIL = 'CUSTOMER';
 interface PurchaseMedicineProps {
   medicines: Medicine[];
   onPurchase: (batchID: string, unitsPurchased: number, customerEmail: string) => Promise<{ success: boolean; error?: string }>;
+  userEmail?: string;
 }
 
-export function PurchaseMedicine({ medicines, onPurchase }: PurchaseMedicineProps) {
+// Helper to calculate available units for a user
+const getAvailableUnits = (medicine: Medicine, userEmail?: string): number => {
+  if (!userEmail) return medicine.remainingUnits || 0;
+  
+  // Always calculate from ownerHistory for accurate tracking
+  let receivedUnits = 0;
+  let transferredOutUnits = 0;
+  let soldUnits = 0;
+  
+  medicine.ownerHistory.forEach(h => {
+    // Units received (either as manufacturer or via transfer)
+    if (h.action === 'REGISTERED' && h.owner.toLowerCase() === userEmail.toLowerCase()) {
+      receivedUnits += medicine.totalUnits || 0;
+    }
+    if (h.action === 'TRANSFERRED' && 
+        h.owner.toLowerCase() === userEmail.toLowerCase() &&
+        h.unitsPurchased) {
+      receivedUnits += h.unitsPurchased;
+    }
+    
+    // Units transferred out by this user
+    if (h.action === 'TRANSFERRED' && 
+        (h as any).from?.toLowerCase() === userEmail.toLowerCase() &&
+        h.unitsPurchased) {
+      transferredOutUnits += h.unitsPurchased;
+    }
+    
+    // Units sold to customers by this user
+    if (h.action === 'PURCHASED' && 
+        (h as any).from?.toLowerCase() === userEmail.toLowerCase() &&
+        h.unitsPurchased) {
+      soldUnits += h.unitsPurchased;
+    }
+  });
+  
+  return receivedUnits - transferredOutUnits - soldUnits;
+};
+
+export function PurchaseMedicine({ medicines, onPurchase, userEmail }: PurchaseMedicineProps) {
   const [selectedBatch, setSelectedBatch] = useState('');
   const [unitsPurchased, setUnitsPurchased] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
@@ -17,14 +56,15 @@ export function PurchaseMedicine({ medicines, onPurchase }: PurchaseMedicineProp
   const [isLoading, setIsLoading] = useState(false);
 
   const selectedMedicine = medicines.find((m) => m.batchID === selectedBatch);
-  const availableStock = selectedMedicine?.remainingUnits ?? 0;
+  const availableStock = selectedMedicine ? getAvailableUnits(selectedMedicine, userEmail) : 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setMessage(null);
 
-    const units = parseInt(unitsPurchased, 10);
+    // Parse units as integer, handling empty string
+    const units = unitsPurchased.trim() === '' ? 0 : parseInt(unitsPurchased.trim(), 10);
 
     if (!selectedBatch) {
       setMessage({ type: 'error', text: 'Please select a medicine batch' });
@@ -109,10 +149,13 @@ export function PurchaseMedicine({ medicines, onPurchase }: PurchaseMedicineProp
             >
               <option value="">-- Select a batch --</option>
               {medicines
-                .filter((m) => m.status === 'ACTIVE' && (m.remainingUnits ?? 0) > 0)
+                .filter((m) => {
+                  const available = getAvailableUnits(m, userEmail);
+                  return m.status === 'ACTIVE' && available > 0;
+                })
                 .map((medicine) => (
                   <option key={medicine.batchID} value={medicine.batchID}>
-                    {medicine.batchID} - {medicine.name} ({medicine.remainingUnits ?? 0} units available)
+                    {medicine.batchID} - {medicine.name} ({getAvailableUnits(medicine, userEmail)} units available)
                   </option>
                 ))}
             </select>

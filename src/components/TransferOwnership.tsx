@@ -1,39 +1,171 @@
-import { useState } from 'react';
-import { ArrowRightLeft, Mail, UserCircle, Package, CheckCircle2, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ArrowRightLeft, Package, CheckCircle2, AlertCircle, Building2 } from 'lucide-react';
 import type { Medicine } from '../App';
+import { companiesAPI } from '../utils/api';
 
 interface TransferOwnershipProps {
+
   medicines: Medicine[];
-  onTransfer: (batchID: string, newOwnerEmail: string, newOwnerRole: string) => { success: boolean; error?: string };
+  getToken: () => Promise<string | null>;
+  onTransfer: (batchID: string, newOwnerEmail: string, newOwnerRole: string, unitsToTransfer: number) => Promise<{ success: boolean; error?: string }>;
+  userEmail?: string;
 }
 
-export function TransferOwnership({ medicines, onTransfer }: TransferOwnershipProps) {
+interface Company {
+  email: string;
+  companyName: string;
+  role: string;
+}
+
+// Helper to calculate available units for a user
+const getAvailableUnits = (medicine: Medicine, userEmail?: string): number => {
+  console.log('getAvailableUnits called:', {
+    batchID: medicine.batchID,
+    userEmail,
+    currentOwner: medicine.currentOwner,
+    remainingUnits: medicine.remainingUnits,
+    ownerHistory: medicine.ownerHistory
+  });
+  
+  if (!userEmail) {
+    console.log('No userEmail, returning remainingUnits:', medicine.remainingUnits);
+    return medicine.remainingUnits || 0;
+  }
+  
+  // Always calculate from ownerHistory for accurate tracking
+  let receivedUnits = 0;
+  let transferredOutUnits = 0;
+  let soldUnits = 0;
+  
+  medicine.ownerHistory.forEach(h => {
+    console.log('Checking ownerHistory entry:', h);
+    
+    // Units received (either as manufacturer or via transfer)
+    if (h.action === 'REGISTERED' && h.owner.toLowerCase() === userEmail.toLowerCase()) {
+      receivedUnits += medicine.totalUnits || 0;
+      console.log('Original owner, totalUnits:', medicine.totalUnits);
+    }
+    if (h.action === 'TRANSFERRED' && 
+        h.owner.toLowerCase() === userEmail.toLowerCase() &&
+        h.unitsPurchased) {
+      console.log('Received units:', h.unitsPurchased);
+      receivedUnits += h.unitsPurchased;
+    }
+    
+    // Units transferred out by this user
+    if (h.action === 'TRANSFERRED' && 
+        (h as any).from?.toLowerCase() === userEmail.toLowerCase() &&
+        h.unitsPurchased) {
+      console.log('Transferred out units:', h.unitsPurchased);
+      transferredOutUnits += h.unitsPurchased;
+    }
+    
+    // Units sold to customers by this user
+    if (h.action === 'PURCHASED' && 
+        (h as any).from?.toLowerCase() === userEmail.toLowerCase() &&
+        h.unitsPurchased) {
+      console.log('Sold units:', h.unitsPurchased);
+      soldUnits += h.unitsPurchased;
+    }
+  });
+  
+  const available = receivedUnits - transferredOutUnits - soldUnits;
+  console.log(`Total received: ${receivedUnits}, transferred out: ${transferredOutUnits}, sold: ${soldUnits}, available: ${available}`);
+  return available;
+};
+
+export function TransferOwnership({ medicines, getToken, onTransfer, userEmail }: TransferOwnershipProps) {
   const [formData, setFormData] = useState({
     batchID: '',
-    newOwnerEmail: '',
-    newOwnerRole: 'DISTRIBUTOR',
+    selectedCompany: '',
+    unitsToTransfer: '',
   });
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [isLoadingCompanies, setIsLoadingCompanies] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedMedicine, setSelectedMedicine] = useState<Medicine | null>(null);
+
+  // Load companies on mount
+  useEffect(() => {
+    const loadCompanies = async () => {
+      try {
+        const token = await getToken();
+        if (!token) {
+          console.error('No token available for companies list');
+          return;
+        }
+
+        console.log('Fetching companies list...');
+        const response = await companiesAPI.list(token);
+        console.log('Companies response:', response);
+        
+        if (response.success && response.companies) {
+          console.log(`Loaded ${response.companies.length} companies:`, response.companies);
+          setCompanies(response.companies);
+        } else {
+          console.error('Failed to load companies:', response);
+        }
+      } catch (error) {
+        console.error('Failed to load companies:', error);
+      } finally {
+        setIsLoadingCompanies(false);
+      }
+    };
+
+    loadCompanies();
+  }, [getToken]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setMessage(null);
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (!formData.selectedCompany) {
+      setMessage({ type: 'error', text: 'Please select a company' });
+      setIsLoading(false);
+      return;
+    }
 
-    const result = onTransfer(formData.batchID, formData.newOwnerEmail, formData.newOwnerRole);
+    const units = parseInt(formData.unitsToTransfer);
+    if (isNaN(units) || units <= 0) {
+      setMessage({ type: 'error', text: 'Please enter valid units' });
+      setIsLoading(false);
+      return;
+    }
+
+    if (selectedMedicine) {
+      const availableUnits = getAvailableUnits(selectedMedicine, userEmail);
+      if (units > availableUnits) {
+        setMessage({ type: 'error', text: `Only ${availableUnits} units available` });
+        setIsLoading(false);
+        return;
+      }
+    }
+
+    const selectedCompany = companies.find(c => c.email === formData.selectedCompany);
+    if (!selectedCompany) {
+      setMessage({ type: 'error', text: 'Invalid company selected' });
+      setIsLoading(false);
+      return;
+    }
+
+    const result = await onTransfer(
+      formData.batchID,
+      selectedCompany.email,
+      selectedCompany.role,
+      units
+    );
+
     if (result.success) {
-      setMessage({ type: 'success', text: 'Ownership transferred successfully!' });
-      setFormData({ batchID: '', newOwnerEmail: '', newOwnerRole: 'DISTRIBUTOR' });
+      setMessage({ type: 'success', text: `${units} units transferred successfully!` });
+      setFormData({ batchID: '', selectedCompany: '', unitsToTransfer: '' });
+      setSelectedMedicine(null);
     } else {
       setMessage({ type: 'error', text: result.error || 'Transfer failed' });
     }
     setIsLoading(false);
   };
-
-  const roles = ['DISTRIBUTOR', 'PHARMACY', 'CUSTOMER'];
 
   return (
     <div>
@@ -75,52 +207,79 @@ export function TransferOwnership({ medicines, onTransfer }: TransferOwnershipPr
               <Package className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
               <select
                 value={formData.batchID}
-                onChange={(e) => setFormData({ ...formData, batchID: e.target.value })}
+                onChange={(e) => {
+                  const selected = medicines.find(m => m.batchID === e.target.value);
+                  setSelectedMedicine(selected || null);
+                  setFormData({ ...formData, batchID: e.target.value, unitsToTransfer: '' });
+                }}
                 className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all appearance-none"
                 required
               >
                 <option value="">Select a medicine batch</option>
-                {medicines.map((med) => (
-                  <option key={med.batchID} value={med.batchID}>
-                    {med.batchID} - {med.name}
-                  </option>
-                ))}
+                {medicines.map((med) => {
+                  const availableUnits = getAvailableUnits(med, userEmail);
+                  return (
+                    <option key={med.batchID} value={med.batchID}>
+                      {med.batchID} - {med.name} ({availableUnits} units available)
+                    </option>
+                  );
+                })}
               </select>
             </div>
+            {selectedMedicine && (
+              <p className="text-xs text-gray-600">
+                Available: {getAvailableUnits(selectedMedicine, userEmail)} units
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">New Owner Email</label>
+            <label className="text-sm font-medium text-gray-700">Transfer To Company</label>
             <div className="relative">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                type="email"
-                value={formData.newOwnerEmail}
-                onChange={(e) => setFormData({ ...formData, newOwnerEmail: e.target.value })}
-                placeholder="e.g., distributor@pharma.com"
-                className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                required
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">New Owner Role</label>
-            <div className="relative">
-              <UserCircle className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
               <select
-                value={formData.newOwnerRole}
-                onChange={(e) => setFormData({ ...formData, newOwnerRole: e.target.value })}
+                value={formData.selectedCompany}
+                onChange={(e) => setFormData({ ...formData, selectedCompany: e.target.value })}
                 className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all appearance-none"
                 required
+                disabled={isLoadingCompanies}
               >
-                {roles.map((role) => (
-                  <option key={role} value={role}>
-                    {role}
+                <option value="">
+                  {isLoadingCompanies ? 'Loading companies...' : 'Select a company'}
+                </option>
+                {companies.map((company) => (
+                  <option key={company.email} value={company.email}>
+                    {company.companyName} ({company.role})
                   </option>
                 ))}
               </select>
             </div>
+            {companies.length === 0 && !isLoadingCompanies && (
+              <p className="text-xs text-amber-600">
+                No companies found. Ask other users to set their company name in their profile.
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-700">Number of Units to Transfer</label>
+            <div className="relative">
+              <Package className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="number"
+                value={formData.unitsToTransfer}
+                onChange={(e) => setFormData({ ...formData, unitsToTransfer: parseInt(e.target.value) || 0 })}
+                max={selectedMedicine ? getAvailableUnits(selectedMedicine, userEmail) : undefined}
+                className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                required
+                disabled={!formData.batchID}
+              />
+            </div>
+            {selectedMedicine && (
+              <p className="text-xs text-blue-600">
+                Max: {getAvailableUnits(selectedMedicine, userEmail)} units
+              </p>
+            )}
           </div>
 
           <button

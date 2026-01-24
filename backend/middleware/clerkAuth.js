@@ -58,7 +58,8 @@ async function clerkAuth(req, res, next) {
       id: user.id,
       email: primaryEmail,
       name: user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.firstName || user.username || 'User',
-      role: user.publicMetadata?.role || "CUSTOMER" // Role stored in Clerk user metadata
+      role: user.publicMetadata?.role || "CUSTOMER", // Role stored in Clerk user metadata
+      companyName: user.publicMetadata?.companyName || ""
     };
 
     next();

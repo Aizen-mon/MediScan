@@ -98,8 +98,7 @@ export function RegisterMedicine({ onRegister }: RegisterMedicineProps) {
       setIsLoading(false);
       return;
     }
-
-    const result = onRegister({
+    const result = await onRegister({
       batchID: trimmedData.batchID,
       name: trimmedData.name,
       manufacturer: trimmedData.manufacturer,
@@ -107,19 +106,31 @@ export function RegisterMedicine({ onRegister }: RegisterMedicineProps) {
       expDate: trimmedData.expDate,
       totalUnits: parseInt(trimmedData.totalUnits, 10),
     });
+
+    // dont what next ? show me the flow 
+    // then  i think this is the issue 
+    // th eissue was that all state changes in the react should be async becuase the response is async.
     
+    //but it's showing locally for me, on other device using hosted network, same account it's not showing.
+// i don't understand this 
+// show me the database 
+// this is happening because you are using a local data store u need to have a online or central store
+//mongodb on other device
+
+
+
     if (result.success) {
       setMessage({ type: 'success', text: 'Medicine registered successfully!' });
       setFormData({ batchID: '', name: '', manufacturer: '', mfgDate: '', expDate: '', totalUnits: '' });
       setFieldErrors({});
     } else {
-      setMessage({ type: 'error', text: result.error || 'Registration failed' });
+      setMessage({ type: 'error', text: result.error || 'Registration failed error 116' });
     }
     setIsLoading(false);
   };
 
   return (
-    <div>
+    <div> 
       <div className="mb-6">
         <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
           <Pill className="w-6 h-6 text-emerald-500" />
