@@ -3,21 +3,7 @@
  * Handles all backend API communications
  */
 
-const API_URL = "https://65b76461956d.ngrok-free.app";
-
-//but erverytime ngrok restarts, the url changes. 
-/// you are right thats why we need a static ip or other hosting service but this is ok for demo 
-//// Io r u cna use AWS or something but u get tht idea
-
-// We have purchased domain, and I have google cloud hosting. So, can we do it on this?
-// yes yes ys you can . first lets see if this works fine . then we can deploy it on google cloud
-//ok restart UI server
-//working
-// perfect  now what you do it use chat gpt and host these on google cloud and you are done.
-//ok
-// i wikll go now have dinner then ping me if issues. ok ?
-//it's continous refreshing on mohit's pc
-
+const API_URL = import.meta.env.CONST_API_URL;
 
 interface ApiResponse<T = any> {
   success?: boolean;
