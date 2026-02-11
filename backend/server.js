@@ -1,3 +1,90 @@
+const { autoBlockSuspiciousBatches } = require("./utils/incidentResponse");
+// ✅ Admin: Automate Incident Response (Auto-block)
+app.post("/dashboard/incident-response", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+  try {
+    const { threshold } = req.body;
+    const blocked = await autoBlockSuspiciousBatches(threshold || 5);
+    res.json({ success: true, blocked });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+const { generateCertificate } = require("./utils/certificates");
+// ✅ Generate Digital Certificate for Batch
+app.post("/certificate", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+  try {
+    const { batchID, owner } = req.body;
+    if (!batchID || !owner) return res.status(400).json({ error: "batchID and owner required" });
+    const cert = generateCertificate(batchID, owner);
+    res.json({ success: true, certificate: cert });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+const { retrainFraudModel } = require("./utils/mlTraining");
+// ✅ Admin: Retrain Fraud Detection Model
+app.post("/dashboard/retrain-ml", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+  try {
+    const { newData } = req.body;
+    const result = await retrainFraudModel(newData || []);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+const { getComplianceIssues } = require("./utils/compliance");
+// ✅ Regulatory Compliance Check (Admin)
+app.get("/dashboard/compliance", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+  try {
+    const issues = await getComplianceIssues();
+    res.json({ success: true, issues });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+const Feedback = require("./models/Feedback");
+// ✅ User Feedback/Dispute Submission
+app.post("/feedback", clerkAuth, async (req, res) => {
+  try {
+    const { batchID, message } = req.body;
+    const user = req.user.id || req.user.sub || req.user._id;
+    const feedback = await Feedback.create({ user, batchID, message });
+    res.json({ success: true, feedback });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Admin: List All Feedback/Disputes
+app.get("/feedback", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+  try {
+    const feedbacks = await Feedback.find().sort({ createdAt: -1 });
+    res.json({ success: true, feedbacks });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Admin: Update Feedback/Dispute Status
+app.put("/feedback/:id", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+  try {
+    const { status } = req.body;
+    const feedback = await Feedback.findByIdAndUpdate(req.params.id, { status, updatedAt: new Date() }, { new: true });
+    res.json({ success: true, feedback });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+const { getAnalytics } = require("./utils/analytics");
+// ✅ Analytics & Reporting Dashboard (Admin)
+app.get("/dashboard/analytics", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+  try {
+    const analytics = await getAnalytics();
+    res.json({ success: true, analytics });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 const { getOfflinePayload, verifyOfflinePayload } = require("./utils/offlineVerification");
 // ✅ Mobile: Get Offline Verification Payload for a Batch
 app.get("/mobile/offline-payload/:batchID", clerkAuth, async (req, res) => {
@@ -62,6 +149,7 @@ const mongoSanitize = require("express-mongo-sanitize");
 const { calculateTrustScore, computeIntegrityHash } = require("./ai/fraudDetection");
 const AuditLog = require("./models/AuditLog");
 const { sendNotification } = require("./utils/notification");
+const { filterMedicineByRole } = require("./utils/roleViews");
 
 // Constants
 const DEFAULT_CUSTOMER_EMAIL = "CUSTOMER";
@@ -892,9 +980,16 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
       });
     }
 
+    // External registry check
+    const { checkBatchWithExternalRegistry } = require("./utils/externalApi");
+    const extCheck = await checkBatchWithExternalRegistry(batchID);
+    // Tamper-evident packaging check
+    const { verifyTamperEvidence } = require("./utils/tamperPackaging");
+    const packagingCode = req.query.packagingCode || req.body?.packagingCode;
+    const tamperValid = verifyTamperEvidence(batchID, packagingCode);
     // AI Trust Score
     const { score, reasons } = await calculateTrustScore(batchID);
-    const anomaly = score < 70;
+    const anomaly = score < 70 || !extCheck.valid || !tamperValid;
 
     // Log scan
     await ScanLog.create({
@@ -930,14 +1025,21 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
       ).catch(console.error);
     }
 
+    // Role-based data view
+    let role = req.user?.role || req.user?.publicMetadata?.role || "CUSTOMER";
+    const filteredMed = filterMedicineByRole(med.toObject ? med.toObject() : med, role);
+    const { getMessage } = require("./utils/i18n");
+    const lang = req.query.lang || "en";
     res.json({
       success: true,
       batchID,
-      result: anomaly ? "⚠️ SUSPICIOUS Medicine Verified" : "✅ GENUINE Medicine Verified",
+      result: anomaly ? getMessage("suspicious", lang) : getMessage("verified", lang),
       trustScore: score,
-      reasons,
-      details: med,
-      ownerHistory: med.ownerHistory
+      reasons: !tamperValid ? ["Failed tamper-evident packaging check", ...reasons] : (extCheck.valid ? reasons : ["Failed external registry check", ...reasons]),
+      details: filteredMed,
+      ownerHistory: filteredMed.ownerHistory,
+      externalRegistry: extCheck,
+      tamperPackaging: tamperValid
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
