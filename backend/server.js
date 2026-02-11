@@ -8,7 +8,12 @@ const { clerkClient } = require("@clerk/clerk-sdk-node");
 
 const Medicine = require("./models/Medicine");
 const ScanLog = require("./models/ScanLog");
+
 const { clerkAuth, authorizeRoles } = require("./middleware/clerkAuth");
+const rateLimit = require("express-rate-limit");
+const mongoSanitize = require("express-mongo-sanitize");
+const { calculateTrustScore, computeIntegrityHash } = require("./ai/fraudDetection");
+const AuditLog = require("./models/AuditLog");
 
 // Constants
 const DEFAULT_CUSTOMER_EMAIL = "CUSTOMER";
@@ -39,6 +44,15 @@ app.use(cors({
 }));
 
 app.use(express.json());
+// NoSQL injection protection
+app.use(mongoSanitize());
+
+// API rate limiting
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100
+});
+app.use("/api/", apiLimiter);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -754,13 +768,26 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
   try {
     const batchID = req.params.batchID;
     const sig = req.query.sig;
+    const location = req.query.location || "UNKNOWN";
+    const deviceId = req.query.deviceId || "UNKNOWN";
+    const user = req.query.user || "UNKNOWN";
 
     const expectedSig = signBatch(batchID);
     if (!sig || sig !== expectedSig) {
       await ScanLog.create({
         batchID,
         result: "❌ FAKE (QR tampered)",
-        scanner: "UNKNOWN"
+        scanner: "UNKNOWN",
+        location,
+        deviceId,
+        user,
+        anomaly: true
+      });
+      await AuditLog.create({
+        action: "QR_VERIFICATION_FAIL",
+        user,
+        batchID,
+        details: { reason: "QR tampered/invalid", location, deviceId }
       });
       return res.json({ 
         success: false,
@@ -774,7 +801,17 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
       await ScanLog.create({
         batchID,
         result: "❌ FAKE (Not Registered)",
-        scanner: "UNKNOWN"
+        scanner: "UNKNOWN",
+        location,
+        deviceId,
+        user,
+        anomaly: true
+      });
+      await AuditLog.create({
+        action: "QR_VERIFICATION_FAIL",
+        user,
+        batchID,
+        details: { reason: "Not Registered", location, deviceId }
       });
       return res.json({ 
         success: false,
@@ -787,7 +824,17 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
       await ScanLog.create({
         batchID,
         result: "❌ BLOCKED",
-        scanner: "UNKNOWN"
+        scanner: "UNKNOWN",
+        location,
+        deviceId,
+        user,
+        anomaly: true
+      });
+      await AuditLog.create({
+        action: "QR_VERIFICATION_FAIL",
+        user,
+        batchID,
+        details: { reason: "BLOCKED", location, deviceId }
       });
       return res.json({ 
         success: false,
@@ -797,20 +844,43 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
       });
     }
 
+    // AI Trust Score
+    const { score, reasons } = await calculateTrustScore(batchID);
+    const anomaly = score < 70;
+
+    // Log scan
     await ScanLog.create({
       batchID,
-      result: "✅ GENUINE",
-      scanner: "UNKNOWN"
+      result: anomaly ? "⚠️ SUSPICIOUS" : "✅ GENUINE",
+      scanner: user,
+      location,
+      deviceId,
+      user,
+      anomaly
+    });
+
+    // Update trust score and integrity hash
+    med.trustScore = score;
+    med.integrityHash = computeIntegrityHash(med);
+    await med.save();
+
+    // Audit log
+    await AuditLog.create({
+      action: "QR_VERIFICATION",
+      user,
+      batchID,
+      details: { location, deviceId, score, reasons }
     });
 
     res.json({
       success: true,
       batchID,
-      result: "✅ GENUINE Medicine Verified",
+      result: anomaly ? "⚠️ SUSPICIOUS Medicine Verified" : "✅ GENUINE Medicine Verified",
+      trustScore: score,
+      reasons,
       details: med,
       ownerHistory: med.ownerHistory
     });
-
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
