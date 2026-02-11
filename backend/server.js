@@ -1,3 +1,40 @@
+const { getOfflinePayload, verifyOfflinePayload } = require("./utils/offlineVerification");
+// ✅ Mobile: Get Offline Verification Payload for a Batch
+app.get("/mobile/offline-payload/:batchID", clerkAuth, async (req, res) => {
+  try {
+    const med = await Medicine.findOne({ batchID: req.params.batchID });
+    if (!med) return res.status(404).json({ error: "Batch not found" });
+    res.json({ success: true, payload: getOfflinePayload(med) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Mobile: Sync Offline Scan Logs
+app.post("/mobile/sync-scan-logs", clerkAuth, async (req, res) => {
+  try {
+    const logs = req.body.logs || [];
+    let saved = 0;
+    for (const log of logs) {
+      // Optionally verify integrity here
+      await ScanLog.create(log);
+      saved++;
+    }
+    res.json({ success: true, saved });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+// ✅ Mobile: Get Scan History for User
+app.get("/mobile/scan-history", clerkAuth, async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.sub || req.user._id;
+    const logs = await ScanLog.find({ user: userId }).sort({ time: -1 });
+    res.json({ success: true, count: logs.length, logs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 const { getScanLocations } = require("./utils/geoDashboard");
 // ✅ Geolocation Visualization Dashboard (Admin)
 app.get("/dashboard/geo", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
