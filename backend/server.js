@@ -1,3 +1,13 @@
+const { getScanLocations } = require("./utils/geoDashboard");
+// ✅ Geolocation Visualization Dashboard (Admin)
+app.get("/dashboard/geo", clerkAuth, authorizeRoles("ADMIN"), async (req, res) => {
+  try {
+    const locations = await getScanLocations();
+    res.json({ success: true, locations });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -14,6 +24,7 @@ const rateLimit = require("express-rate-limit");
 const mongoSanitize = require("express-mongo-sanitize");
 const { calculateTrustScore, computeIntegrityHash } = require("./ai/fraudDetection");
 const AuditLog = require("./models/AuditLog");
+const { sendNotification } = require("./utils/notification");
 
 // Constants
 const DEFAULT_CUSTOMER_EMAIL = "CUSTOMER";
@@ -871,6 +882,16 @@ app.get("/medicine/verify/:batchID", async (req, res) => {
       batchID,
       details: { location, deviceId, score, reasons }
     });
+
+    // Real-time notification for suspicious activity
+    if (anomaly) {
+      // Example: notify admin (replace with actual admin email)
+      sendNotification(
+        process.env.ADMIN_NOTIFY_EMAIL || "admin@example.com",
+        `Suspicious QR Scan Detected: ${batchID}`,
+        `A suspicious scan was detected for batch ${batchID} at location ${location} with device ${deviceId}.\nReasons: ${reasons.join(", ")}`
+      ).catch(console.error);
+    }
 
     res.json({
       success: true,
