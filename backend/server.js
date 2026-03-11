@@ -151,6 +151,9 @@ const AuditLog = require("./models/AuditLog");
 const { sendNotification } = require("./utils/notification");
 const { filterMedicineByRole } = require("./utils/roleViews");
 
+// Blockchain integration
+const blockchain = require("./utils/blockchain");
+
 // Constants
 const DEFAULT_CUSTOMER_EMAIL = "CUSTOMER";
 
@@ -308,6 +311,31 @@ app.put("/auth/profile", clerkAuth, async (req, res) => {
 
 // Get list of companies (for transfer dropdown)
 app.get("/companies/list", clerkAuth, async (req, res) => {
+
+// =============================
+// Blockchain endpoints
+// =============================
+// Add a medicine transaction to the blockchain
+app.post("/blockchain/add", clerkAuth, async (req, res) => {
+  try {
+    const { data } = req.body;
+    if (!data) return res.status(400).json({ error: "Missing data" });
+    const block = await blockchain.addBlock(data);
+    res.json({ success: true, block });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get the full blockchain
+app.get("/blockchain/chain", clerkAuth, async (req, res) => {
+  try {
+    const chain = await blockchain.getChain();
+    res.json({ success: true, chain });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
   try {
     const { role } = req.query;
     const currentUserEmail = req.user.email.toLowerCase();
